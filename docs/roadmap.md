@@ -56,10 +56,10 @@ Los gráficos de FotoDif (curva de luz, airmass/transparencia/FWHM) son estátic
 ## 4. Estructura de Archivos Recomendada (Layout Estándar en Go)
 
 ```text
-aperphot/
+starflux/
 ├── .github/workflows/      # CI/CD para compilar binarios automáticamente
 ├── cmd/
-│   └── aperphot/           # Punto de entrada principal (main.go)
+│   └── starflux/           # Punto de entrada principal (main.go)
 ├── internal/
 │   ├── fits/               # Parseo y extracción de metadatos/píxeles
 │   ├── photometry/         # Algoritmos de centroide y fotometría de apertura
@@ -102,7 +102,7 @@ $$\text{Flujo Neto} = \text{Suma Apertura} - (N_{p\text{í}xeles\_apertura} \cdo
 
 ## 6. Código Base Inicial (Template en Go)
 
-Crea este archivo en `cmd/aperphot/main.go` para validar que puedes leer un archivo FITS y acceder a su matriz de píxeles:
+Crea este archivo en `cmd/starflux/main.go` para validar que puedes leer un archivo FITS y acceder a su matriz de píxeles:
 
 ```go
 package main

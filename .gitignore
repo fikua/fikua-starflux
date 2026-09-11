@@ -1,0 +1,7 @@
+/bin/
+/dist/
+*.exe
+*.test
+*.fits
+*.fit
+.DS_Store
