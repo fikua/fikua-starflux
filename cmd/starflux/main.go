@@ -1,16 +1,26 @@
 package main
 
 import (
+	"fmt"
+
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/storage"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/fikua/fikua-starflux/internal/fits"
+	"github.com/fikua/fikua-starflux/internal/photometry"
+	"github.com/fikua/fikua-starflux/internal/timeseries"
 	"github.com/fikua/fikua-starflux/internal/ui"
 )
+
+const centroidHalfWidth = 10
+
+var defaultAperture = photometry.Aperture{R: 6, RIn: 10, ROut: 15}
 
 func main() {
 	a := app.New()
@@ -20,6 +30,7 @@ func main() {
 	levels := ui.Levels{Background: 0, Range: 65535}
 	var current *fits.Image
 	role := ui.RoleTarget
+	markers := map[ui.StarRole]ui.Marker{}
 
 	redraw := func() {
 		if current == nil {
@@ -29,7 +40,9 @@ func main() {
 	}
 
 	view.OnTap = func(x, y float64) {
-		view.AddMarker(ui.Marker{Role: role, X: x, Y: y})
+		m := ui.Marker{Role: role, X: x, Y: y}
+		markers[role] = m
+		view.AddMarker(m)
 	}
 
 	roleSelect := widget.NewSelect(
@@ -49,6 +62,9 @@ func main() {
 
 	clearButton := widget.NewButton("Clear markers", func() {
 		view.ClearMarkers()
+		for k := range markers {
+			delete(markers, k)
+		}
 	})
 
 	bgSlider := widget.NewSlider(0, 65535)
@@ -90,6 +106,50 @@ func main() {
 		d.Show()
 	})
 
+	processButton := widget.NewButton("Process", func() {
+		if current == nil {
+			dialog.ShowInformation("Starflux", "Open a FITS image first.", w)
+			return
+		}
+		target, hasTarget := markers[ui.RoleTarget]
+		comp, hasComp := markers[ui.RoleComparison]
+		if !hasTarget || !hasComp {
+			dialog.ShowInformation("Starflux", "Place both a Target and a Comparison marker first.", w)
+			return
+		}
+
+		targetRes, err := photometry.Measure(current, int(target.X), int(target.Y), centroidHalfWidth, defaultAperture)
+		if err != nil {
+			dialog.ShowError(fmt.Errorf("target: %w", err), w)
+			return
+		}
+		compRes, err := photometry.Measure(current, int(comp.X), int(comp.Y), centroidHalfWidth, defaultAperture)
+		if err != nil {
+			dialog.ShowError(fmt.Errorf("comparison: %w", err), w)
+			return
+		}
+
+		point, err := timeseries.DifferentialMagnitude(timeseries.Observation{
+			JD:     0,
+			Target: targetRes,
+			Comp:   compRes,
+		})
+		if err != nil {
+			dialog.ShowError(err, w)
+			return
+		}
+
+		showLightCurve(w, []timeseries.Point{point}, "Target")
+	})
+
+	observerMode := widget.NewCheck("Observer mode (red light)", func(on bool) {
+		if on {
+			a.Settings().SetTheme(ui.ObserverTheme{})
+		} else {
+			a.Settings().SetTheme(theme.DefaultTheme())
+		}
+	})
+
 	controls := container.NewVBox(
 		openButton,
 		widget.NewLabel("Star role:"),
@@ -99,10 +159,31 @@ func main() {
 		bgSlider,
 		widget.NewLabel("Range:"),
 		rangeSlider,
+		processButton,
+		observerMode,
 	)
 
 	content := container.NewBorder(nil, nil, nil, controls, view)
 	w.SetContent(content)
 	w.Resize(fyne.NewSize(1000, 700))
 	w.ShowAndRun()
+}
+
+// showLightCurve renders a differential-magnitude light curve and displays
+// it in a new dialog window.
+func showLightCurve(parent fyne.Window, points []timeseries.Point, label string) {
+	img, err := ui.PlotLightCurve(points, label)
+	if err != nil {
+		dialog.ShowError(err, parent)
+		return
+	}
+
+	last := points[len(points)-1]
+	summary := widget.NewLabel(fmt.Sprintf("Δm = %.4f ± %.4f", last.DiffMag, last.DiffMagErr))
+	plotImg := canvas.NewImageFromImage(img)
+	plotImg.FillMode = canvas.ImageFillContain
+	plotImg.SetMinSize(fyne.NewSize(500, 320))
+
+	d := dialog.NewCustom("Light curve", "Close", container.NewVBox(summary, plotImg), parent)
+	d.Show()
 }
