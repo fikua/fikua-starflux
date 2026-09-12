@@ -89,24 +89,39 @@ func LoadDir(dir string) ([]*Image, error) {
 		return nil, fmt.Errorf("fits: read dir %s: %w", dir, err)
 	}
 
-	var names []string
+	var paths []string
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
 		}
 		if isFITSExt(e.Name()) {
-			names = append(names, e.Name())
+			paths = append(paths, filepath.Join(dir, e.Name()))
 		}
 	}
-	sort.Strings(names)
 
-	if len(names) == 0 {
+	if len(paths) == 0 {
 		return nil, fmt.Errorf("fits: %s: no FITS files found", dir)
 	}
 
-	images := make([]*Image, 0, len(names))
-	for _, name := range names {
-		img, err := Load(filepath.Join(dir, name))
+	return LoadFiles(paths)
+}
+
+// LoadFiles loads each of the given FITS file paths, sorted by filename
+// (which for a normally-named observing session corresponds to acquisition
+// order).
+func LoadFiles(paths []string) ([]*Image, error) {
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("fits: no files given")
+	}
+
+	sorted := append([]string(nil), paths...)
+	sort.Slice(sorted, func(i, j int) bool {
+		return filepath.Base(sorted[i]) < filepath.Base(sorted[j])
+	})
+
+	images := make([]*Image, 0, len(sorted))
+	for _, path := range sorted {
+		img, err := Load(path)
 		if err != nil {
 			return nil, err
 		}

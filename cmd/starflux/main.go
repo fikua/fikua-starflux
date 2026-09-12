@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 
 	"fyne.io/fyne/v2"
@@ -8,9 +9,9 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
-	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
+	"github.com/ncruces/zenity"
 
 	"github.com/fikua/fikua-starflux/internal/fits"
 	"github.com/fikua/fikua-starflux/internal/photometry"
@@ -94,39 +95,63 @@ func main() {
 		redraw()
 	}
 
-	openFileButton := widget.NewButton("Open FITS...", func() {
-		d := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
-			if err != nil {
-				dialog.ShowError(err, w)
-				return
-			}
-			if reader == nil {
-				return // user canceled
-			}
-			defer reader.Close()
+	fitsFilter := zenity.FileFilter{
+		Name:     "FITS images",
+		Patterns: []string{"*.fits", "*.fit", "*.fts"},
+		CaseFold: true,
+	}
 
-			img, err := fits.Load(reader.URI().Path())
-			if err != nil {
-				loadSeries(nil, err)
+	openFileButton := widget.NewButton("Open FITS...", func() {
+		go func() {
+			path, err := zenity.SelectFile(zenity.FileFilters{fitsFilter})
+			if errors.Is(err, zenity.ErrCanceled) {
 				return
 			}
-			loadSeries([]*fits.Image{img}, nil)
-		}, w)
-		d.SetFilter(storage.NewExtensionFileFilter([]string{".fits", ".fit", ".fts"}))
-		d.Show()
+			fyne.Do(func() {
+				if err != nil {
+					loadSeries(nil, err)
+					return
+				}
+				img, err := fits.Load(path)
+				if err != nil {
+					loadSeries(nil, err)
+					return
+				}
+				loadSeries([]*fits.Image{img}, nil)
+			})
+		}()
+	})
+
+	openFilesButton := widget.NewButton("Open Files...", func() {
+		go func() {
+			paths, err := zenity.SelectFileMultiple(zenity.FileFilters{fitsFilter})
+			if errors.Is(err, zenity.ErrCanceled) {
+				return
+			}
+			fyne.Do(func() {
+				if err != nil {
+					loadSeries(nil, err)
+					return
+				}
+				loadSeries(fits.LoadFiles(paths))
+			})
+		}()
 	})
 
 	openFolderButton := widget.NewButton("Open Folder...", func() {
-		dialog.NewFolderOpen(func(uri fyne.ListableURI, err error) {
-			if err != nil {
-				dialog.ShowError(err, w)
+		go func() {
+			path, err := zenity.SelectFile(zenity.Directory())
+			if errors.Is(err, zenity.ErrCanceled) {
 				return
 			}
-			if uri == nil {
-				return // user canceled
-			}
-			loadSeries(fits.LoadDir(uri.Path()))
-		}, w).Show()
+			fyne.Do(func() {
+				if err != nil {
+					loadSeries(nil, err)
+					return
+				}
+				loadSeries(fits.LoadDir(path))
+			})
+		}()
 	})
 
 	processButton := widget.NewButton("Process", func() {
@@ -179,6 +204,7 @@ func main() {
 
 	controls := container.NewVBox(
 		openFileButton,
+		openFilesButton,
 		openFolderButton,
 		widget.NewLabel("Star role:"),
 		roleSelect,

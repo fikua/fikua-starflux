@@ -187,6 +187,37 @@ func TestLoadDir(t *testing.T) {
 	}
 }
 
+func TestLoadFiles_sortsByFilenameRegardlessOfInputOrder(t *testing.T) {
+	dir := t.TempDir()
+	pathA := filepath.Join(dir, "a_000.fits")
+	pathB := filepath.Join(dir, "b_001.fits")
+	pathC := filepath.Join(dir, "c_002.fits")
+	writeTestFITS(t, pathA, 16, []int{1, 1}, []int16{1}, 0, 0)
+	writeTestFITS(t, pathB, 16, []int{1, 1}, []int16{2}, 0, 0)
+	writeTestFITS(t, pathC, 16, []int{1, 1}, []int16{3}, 0, 0)
+
+	// Deliberately out of order, simulating a multi-select file picker
+	// that returns paths in selection order rather than sorted order.
+	images, err := LoadFiles([]string{pathC, pathA, pathB})
+	if err != nil {
+		t.Fatalf("LoadFiles: %v", err)
+	}
+
+	if len(images) != 3 {
+		t.Fatalf("got %d images, want 3", len(images))
+	}
+	if images[0].Pixels[0] != 1 || images[1].Pixels[0] != 2 || images[2].Pixels[0] != 3 {
+		t.Errorf("images not sorted by filename: got first pixels %v, %v, %v",
+			images[0].Pixels[0], images[1].Pixels[0], images[2].Pixels[0])
+	}
+}
+
+func TestLoadFiles_empty(t *testing.T) {
+	if _, err := LoadFiles(nil); err == nil {
+		t.Fatal("expected an error for an empty file list")
+	}
+}
+
 func TestLoadDir_empty(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := LoadDir(dir); err == nil {
