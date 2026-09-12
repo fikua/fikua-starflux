@@ -17,7 +17,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Install fyne-cross
-        run: go install github.com/fyne-io/fyne-cross@latest
+        run: go install github.com/fyne-io/fyne-cross@v1.6.3
       - name: Cross-compile
         run: fyne-cross ${{ matrix.os }} -arch=amd64,arm64 -app-id=org.fikua.starflux ./cmd/starflux
       - name: Package artifacts
@@ -41,7 +41,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Install fyne CLI
-        run: go install fyne.io/tools/cmd/fyne@latest
+        run: go install fyne.io/tools/cmd/fyne@v1.7.2
       - name: Package
         run: |
           mkdir -p release
