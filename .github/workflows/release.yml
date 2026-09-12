@@ -5,12 +5,9 @@ on:
       - "v*"
 
 jobs:
-  build-cross:
-    name: Build (${{ matrix.os }})
+  build-linux:
+    name: Build (linux)
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        os: [linux, windows]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
@@ -19,17 +16,44 @@ jobs:
       - name: Install fyne-cross
         run: go install github.com/fyne-io/fyne-cross@v1.6.3
       - name: Cross-compile
-        run: fyne-cross ${{ matrix.os }} -arch=amd64,arm64 -app-id=org.fikua.starflux ./cmd/starflux
+        run: fyne-cross linux -arch=amd64,arm64 -app-id=org.fikua.starflux ./cmd/starflux
       - name: Package artifacts
         run: |
           mkdir -p release
-          for d in fyne-cross/dist/${{ matrix.os }}-*/; do
+          for d in fyne-cross/dist/linux-*/; do
             arch=$(basename "$d")
             (cd "$d" && tar -czf "../../../release/starflux-${arch}.tar.gz" .)
           done
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: release-${{ matrix.os }}
+          name: release-linux
+          path: release/*
+
+  build-windows:
+    name: Build (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+      - name: Install fyne CLI
+        run: go install fyne.io/tools/cmd/fyne@v1.7.2
+      - name: Package
+        run: fyne package -os windows -app-id org.fikua.starflux -src .\cmd\starflux
+      - name: Build installer with Inno Setup
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          & "C:\Program Files (x86)\Inno Setup 6\iscc.exe" `
+            "/DMyAppVersion=$version" `
+            "/DSrcDir=$PWD\cmd\starflux" `
+            "/DOutDir=$PWD\release" `
+            packaging\windows\starflux.iss
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-windows
           path: release/*
 
   build-darwin:
@@ -42,13 +66,21 @@ jobs:
           go-version-file: go.mod
       - name: Install fyne CLI
         run: go install fyne.io/tools/cmd/fyne@v1.7.2
-      - name: Package
+      - name: Install create-dmg
+        run: brew install create-dmg
+      - name: Package and build dmg
         run: |
           mkdir -p release
           for arch in amd64 arm64; do
+            rm -rf starflux.app
             GOARCH=$arch fyne package -os darwin -app-id org.fikua.starflux -src ./cmd/starflux
-            mv starflux.app "release/Starflux-darwin-${arch}.app"
-            (cd release && zip -qr "starflux-darwin-${arch}.zip" "Starflux-darwin-${arch}.app" && rm -rf "Starflux-darwin-${arch}.app")
+            create-dmg \
+              --volname "Starflux" \
+              --app-drop-link 450 150 \
+              --icon "starflux.app" 150 150 \
+              --window-size 600 300 \
+              "release/starflux-darwin-${arch}.dmg" \
+              "starflux.app"
           done
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -57,7 +89,7 @@ jobs:
 
   hash:
     name: Hash artifacts
-    needs: [build-cross, build-darwin]
+    needs: [build-linux, build-windows, build-darwin]
     runs-on: ubuntu-latest
     permissions:
       contents: write

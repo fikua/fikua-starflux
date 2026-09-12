@@ -14,13 +14,21 @@ See [docs/roadmap.md](docs/roadmap.md) for architecture and design decisions.
 
 ## Download
 
-Get the [latest release](https://github.com/fikua/fikua-starflux/releases/latest):
+Grab the [latest release](https://github.com/fikua/fikua-starflux/releases/latest):
 
-- **macOS**: `starflux-darwin-arm64.zip` (Apple Silicon) or `starflux-darwin-amd64.zip` (Intel)
-- **Windows**: `starflux-windows-amd64.tar.gz` or `starflux-windows-arm64.tar.gz`
-- **Linux**: `starflux-linux-amd64.tar.gz` or `starflux-linux-arm64.tar.gz`
+| Platform | Download |
+|---|---|
+| 🍎 Desktop app for macOS (Apple Silicon) | `starflux-darwin-arm64.dmg` |
+| 🍎 Desktop app for macOS (Intel) | `starflux-darwin-amd64.dmg` |
+| 🪟 Desktop app for Windows | `starflux-windows-amd64-setup.exe` |
+| 🐧 Desktop app for Linux (x86_64) | `starflux-linux-amd64.tar.gz` |
+| 🐧 Desktop app for Linux (ARM64) | `starflux-linux-arm64.tar.gz` |
 
-Binaries are not code-signed yet: macOS Gatekeeper and Windows SmartScreen will warn on first launch. On macOS, right-click the app and choose "Open" instead of double-clicking (or run `xattr -cr Starflux.app` from Terminal).
+All [beta releases are available here](https://github.com/fikua/fikua-starflux/releases).
+
+Binaries are not code-signed yet: macOS Gatekeeper and Windows SmartScreen will warn on first launch.
+- **macOS**: right-click the app inside the mounted `.dmg` and choose "Open" instead of double-clicking (or run `xattr -cr Starflux.app` from Terminal).
+- **Windows**: click "More info" → "Run anyway" on the SmartScreen prompt.
 
 ## Status
 
