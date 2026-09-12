@@ -1,0 +1,60 @@
+name: Release
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [linux, windows, darwin]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+      - name: Install fyne-cross
+        run: go install github.com/fyne-io/fyne-cross@latest
+      - name: Cross-compile
+        run: fyne-cross ${{ matrix.os }} -arch=amd64,arm64 -app-id=org.fikua.starflux ./cmd/starflux
+      - name: Package artifacts
+        run: |
+          mkdir -p release
+          for d in fyne-cross/dist/${{ matrix.os }}-*/; do
+            arch=$(basename "$d")
+            (cd "$d" && tar -czf "../../../release/starflux-${arch}.tar.gz" .)
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-${{ matrix.os }}
+          path: release/*
+
+  hash:
+    name: Hash artifacts
+    needs: [build]
+    runs-on: ubuntu-latest
+    outputs:
+      hashes: ${{ steps.hash.outputs.hashes }}
+    steps:
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          pattern: release-*
+          path: release
+          merge-multiple: true
+      - id: hash
+        working-directory: release
+        run: echo "hashes=$(sha256sum * | base64 -w0)" >> "$GITHUB_OUTPUT"
+
+  provenance:
+    needs: [hash]
+    permissions:
+      actions: read
+      id-token: write
+      contents: write
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
+    with:
+      base64-subjects: "${{ needs.hash.outputs.hashes }}"
+      upload-assets: true

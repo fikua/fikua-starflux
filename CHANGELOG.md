@@ -16,3 +16,4 @@ once a first tagged release is published.
 - `internal/ui`: FITS image viewer with clickable star markers (target/comparison/check), static light-curve rendering via gonum/plot, and a red-on-black "Observer mode" theme.
 - Main window wiring: open a FITS file, adjust background/range display levels, place star markers, and run photometry to produce a light-curve plot.
 - CI: build, test, and SonarCloud analysis on push to `main` and on pull requests.
+- Release CI: cross-platform builds (Linux/Windows/macOS via fyne-cross) and SLSA3 provenance generation on version tags.
