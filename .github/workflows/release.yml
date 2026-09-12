@@ -5,12 +5,12 @@ on:
       - "v*"
 
 jobs:
-  build:
+  build-cross:
     name: Build (${{ matrix.os }})
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        os: [linux, windows, darwin]
+        os: [linux, windows]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
@@ -32,9 +32,32 @@ jobs:
           name: release-${{ matrix.os }}
           path: release/*
 
+  build-darwin:
+    name: Build (darwin)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+      - name: Install fyne CLI
+        run: go install fyne.io/tools/cmd/fyne@latest
+      - name: Package
+        run: |
+          mkdir -p release
+          for arch in amd64 arm64; do
+            GOARCH=$arch fyne package -os darwin -app-id org.fikua.starflux -src ./cmd/starflux
+            mv starflux.app "release/Starflux-darwin-${arch}.app"
+            (cd release && zip -qr "starflux-darwin-${arch}.zip" "Starflux-darwin-${arch}.app" && rm -rf "Starflux-darwin-${arch}.app")
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-darwin
+          path: release/*
+
   hash:
     name: Hash artifacts
-    needs: [build]
+    needs: [build-cross, build-darwin]
     runs-on: ubuntu-latest
     outputs:
       hashes: ${{ steps.hash.outputs.hashes }}
