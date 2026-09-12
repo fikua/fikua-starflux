@@ -8,7 +8,10 @@ import (
 	"codeberg.org/astrogo/fitsio"
 )
 
-func writeTestFITS(t *testing.T, path string) {
+// writeTestFITS writes a FITS file with the given bitpix and pixel data
+// (data's concrete type must match bitpix, per fitsio's requirements),
+// plus standard metadata cards and, optionally, BSCALE/BZERO.
+func writeTestFITS(t *testing.T, path string, bitpix int, axes []int, data interface{}, bscale, bzero float64) {
 	t.Helper()
 
 	f, err := os.Create(path)
@@ -23,20 +26,21 @@ func writeTestFITS(t *testing.T, path string) {
 	}
 	defer file.Close()
 
-	axes := []int{3, 2} // width=3, height=2
-	data := []float64{
-		0, 1, 2,
-		3, 4, 5,
-	}
-
-	img := fitsio.NewImage(-64, axes)
+	img := fitsio.NewImage(bitpix, axes)
 	defer img.Close()
 
-	if err := img.Header().Append(
-		fitsio.Card{Name: "INSTRUME", Value: "TestCam", Comment: "instrument"},
-		fitsio.Card{Name: "EXPTIME", Value: 30.5, Comment: "exposure seconds"},
-		fitsio.Card{Name: "DATE-OBS", Value: "2026-09-12T00:00:00", Comment: "observation date"},
-	); err != nil {
+	cards := []fitsio.Card{
+		{Name: "INSTRUME", Value: "TestCam", Comment: "instrument"},
+		{Name: "EXPTIME", Value: 30.5, Comment: "exposure seconds"},
+		{Name: "DATE-OBS", Value: "2026-09-12T00:00:00", Comment: "observation date"},
+	}
+	if bscale != 0 {
+		cards = append(cards, fitsio.Card{Name: "BSCALE", Value: bscale, Comment: "scale"})
+	}
+	if bzero != 0 {
+		cards = append(cards, fitsio.Card{Name: "BZERO", Value: bzero, Comment: "zero offset"})
+	}
+	if err := img.Header().Append(cards...); err != nil {
 		t.Fatalf("append header cards: %v", err)
 	}
 
@@ -50,7 +54,11 @@ func writeTestFITS(t *testing.T, path string) {
 
 func TestLoad(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.fits")
-	writeTestFITS(t, path)
+	data := []float64{
+		0, 1, 2,
+		3, 4, 5,
+	}
+	writeTestFITS(t, path, -64, []int{3, 2}, data, 0, 0)
 
 	img, err := Load(path)
 	if err != nil {
@@ -82,6 +90,52 @@ func TestLoad(t *testing.T) {
 	}
 	if got := img.At(0, 0); got != 0 {
 		t.Errorf("At(0, 0) = %v, want 0", got)
+	}
+}
+
+func TestLoad_bitpix16(t *testing.T) {
+	// bitpix=16 (16-bit signed integer ADU values) is the common format
+	// produced by CCD/CMOS astro cameras and previously crashed Load with
+	// "element-size do not match" since fitsio requires an exact-size
+	// read type per bitpix.
+	path := filepath.Join(t.TempDir(), "test16.fits")
+	data := []int16{
+		100, 200, 300,
+		400, 500, 32767,
+	}
+	writeTestFITS(t, path, 16, []int{3, 2}, data, 0, 0)
+
+	img, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	want := []float64{100, 200, 300, 400, 500, 32767}
+	for i, v := range want {
+		if img.Pixels[i] != v {
+			t.Errorf("Pixels[%d] = %v, want %v", i, img.Pixels[i], v)
+		}
+	}
+}
+
+func TestLoad_bscaleBzero(t *testing.T) {
+	// Unsigned 16-bit sensor data is commonly stored as bitpix=16 with
+	// BZERO=32768 to represent the 0-65535 range; Load must apply the
+	// rescale rather than return raw signed values.
+	path := filepath.Join(t.TempDir(), "test_scaled.fits")
+	data := []int16{-32768, 0, 32767} // -> 0, 32768, 65535 after BZERO
+	writeTestFITS(t, path, 16, []int{3, 1}, data, 1, 32768)
+
+	img, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	want := []float64{0, 32768, 65535}
+	for i, v := range want {
+		if img.Pixels[i] != v {
+			t.Errorf("Pixels[%d] = %v, want %v", i, img.Pixels[i], v)
+		}
 	}
 }
 

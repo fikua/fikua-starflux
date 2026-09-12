@@ -54,8 +54,8 @@ func Load(path string) (*Image, error) {
 	}
 	width, height := axes[0], axes[1]
 
-	pixels := make([]float64, width*height)
-	if err := img.Read(&pixels); err != nil {
+	pixels, err := readPixels(img, header, width*height)
+	if err != nil {
 		return nil, fmt.Errorf("fits: %s: read pixels: %w", path, err)
 	}
 
@@ -73,6 +73,83 @@ func Load(path string) (*Image, error) {
 // the row, both zero-based.
 func (img *Image) At(x, y int) float64 {
 	return img.Pixels[y*img.W+x]
+}
+
+// readPixels reads the raw pixel data using the type matching the image's
+// bitpix (fitsio requires an exact match), converts it to float64, and
+// applies BSCALE/BZERO rescaling per the FITS standard.
+func readPixels(img fitsio.Image, header *fitsio.Header, n int) ([]float64, error) {
+	bitpix := header.Bitpix()
+
+	var out []float64
+	switch bitpix {
+	case 8:
+		raw := make([]byte, n)
+		if err := img.Read(&raw); err != nil {
+			return nil, err
+		}
+		out = make([]float64, n)
+		for i, v := range raw {
+			out[i] = float64(v)
+		}
+	case 16:
+		raw := make([]int16, n)
+		if err := img.Read(&raw); err != nil {
+			return nil, err
+		}
+		out = make([]float64, n)
+		for i, v := range raw {
+			out[i] = float64(v)
+		}
+	case 32:
+		raw := make([]int32, n)
+		if err := img.Read(&raw); err != nil {
+			return nil, err
+		}
+		out = make([]float64, n)
+		for i, v := range raw {
+			out[i] = float64(v)
+		}
+	case 64:
+		raw := make([]int64, n)
+		if err := img.Read(&raw); err != nil {
+			return nil, err
+		}
+		out = make([]float64, n)
+		for i, v := range raw {
+			out[i] = float64(v)
+		}
+	case -32:
+		raw := make([]float32, n)
+		if err := img.Read(&raw); err != nil {
+			return nil, err
+		}
+		out = make([]float64, n)
+		for i, v := range raw {
+			out[i] = float64(v)
+		}
+	case -64:
+		raw := make([]float64, n)
+		if err := img.Read(&raw); err != nil {
+			return nil, err
+		}
+		out = raw
+	default:
+		return nil, fmt.Errorf("unsupported bitpix %d", bitpix)
+	}
+
+	bzero := headerFloat(header, "BZERO")
+	bscale := headerFloat(header, "BSCALE")
+	if bscale == 0 {
+		bscale = 1
+	}
+	if bzero != 0 || bscale != 1 {
+		for i, v := range out {
+			out[i] = v*bscale + bzero
+		}
+	}
+
+	return out, nil
 }
 
 func headerString(h *fitsio.Header, key string) string {
