@@ -59,6 +59,8 @@ jobs:
     name: Hash artifacts
     needs: [build-cross, build-darwin]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     outputs:
       hashes: ${{ steps.hash.outputs.hashes }}
     steps:
@@ -70,6 +72,14 @@ jobs:
       - id: hash
         working-directory: release
         run: echo "hashes=$(sha256sum * | base64 -w0)" >> "$GITHUB_OUTPUT"
+      - name: Create release and upload binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" release/* \
+            --repo "${{ github.repository }}" \
+            --title "${{ github.ref_name }}" \
+            --generate-notes
 
   provenance:
     needs: [hash]

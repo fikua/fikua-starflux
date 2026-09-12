@@ -12,9 +12,19 @@ Native desktop app (Windows/Linux/macOS) for differential aperture photometry on
 
 See [docs/roadmap.md](docs/roadmap.md) for architecture and design decisions.
 
+## Download
+
+Get the [latest release](https://github.com/fikua/fikua-starflux/releases/latest):
+
+- **macOS**: `starflux-darwin-arm64.zip` (Apple Silicon) or `starflux-darwin-amd64.zip` (Intel)
+- **Windows**: `starflux-windows-amd64.tar.gz` or `starflux-windows-arm64.tar.gz`
+- **Linux**: `starflux-linux-amd64.tar.gz` or `starflux-linux-arm64.tar.gz`
+
+Binaries are not code-signed yet: macOS Gatekeeper and Windows SmartScreen will warn on first launch. On macOS, right-click the app and choose "Open" instead of double-clicking (or run `xattr -cr Starflux.app` from Terminal).
+
 ## Status
 
-Early development. Not yet usable.
+Early development, single-image workflow only. Not yet feature-complete — see [CHANGELOG.md](CHANGELOG.md).
 
 ## Contributing
 
