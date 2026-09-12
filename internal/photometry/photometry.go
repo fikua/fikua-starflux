@@ -25,11 +25,11 @@ type Aperture struct {
 
 // Result is the outcome of measuring one star on one image.
 type Result struct {
-	X, Y      float64 // refined centroid position
-	SkyPerPx  float64 // estimated sky background per pixel
-	ApSum     float64 // raw sum of ADUs inside the aperture
-	NetFlux   float64 // ApSum minus the sky contribution
-	ApPixels  float64 // effective pixel count covered by the aperture
+	X, Y     float64 // refined centroid position
+	SkyPerPx float64 // estimated sky background per pixel
+	ApSum    float64 // raw sum of ADUs inside the aperture
+	NetFlux  float64 // ApSum minus the sky contribution
+	ApPixels float64 // effective pixel count covered by the aperture
 }
 
 // Centroid refines an approximate star position (x0, y0) to a sub-pixel
