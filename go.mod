@@ -1,6 +1,6 @@
 module github.com/fikua/fikua-starflux
 
-go 1.26.5
+go 1.25.0
 
 require (
 	codeberg.org/astrogo/fitsio v0.5.1
