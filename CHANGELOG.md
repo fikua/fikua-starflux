@@ -6,7 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 once a first tagged release is published.
 
-## [Unreleased]
+## [0.1.0] - 2026-09-12
+
+First testable build. Single-image workflow only: open one FITS file,
+place target/comparison markers, and produce a single differential
+magnitude point. No multi-image session batching, image alignment, or
+code signing/notarization yet — expect Gatekeeper/SmartScreen warnings
+on first launch.
 
 ### Added
 - Project bootstrap: Go module, Fyne-based desktop app skeleton, Apache 2.0 license.
