@@ -144,3 +144,58 @@ func TestLoad_missingFile(t *testing.T) {
 		t.Fatal("expected an error for a missing file, got nil")
 	}
 }
+
+func TestJulianDate(t *testing.T) {
+	cases := []struct {
+		dateObs string
+		want    float64
+	}{
+		{"2000-01-01T12:00:00", 2451545.0}, // J2000.0 epoch, a well-known reference value
+		{"", 0},
+		{"not-a-date", 0},
+	}
+	for _, c := range cases {
+		if got := julianDate(c.dateObs); got != c.want {
+			t.Errorf("julianDate(%q) = %v, want %v", c.dateObs, got, c.want)
+		}
+	}
+}
+
+func TestLoadDir(t *testing.T) {
+	dir := t.TempDir()
+
+	// Three FITS files plus one non-FITS file that must be ignored, named
+	// so alphabetical sort matches acquisition order.
+	writeTestFITS(t, filepath.Join(dir, "img_000.fits"), 16, []int{2, 1}, []int16{1, 2}, 0, 0)
+	writeTestFITS(t, filepath.Join(dir, "img_001.fit"), 16, []int{2, 1}, []int16{3, 4}, 0, 0)
+	writeTestFITS(t, filepath.Join(dir, "img_002.FITS"), 16, []int{2, 1}, []int16{5, 6}, 0, 0)
+	if err := os.WriteFile(filepath.Join(dir, "readme.txt"), []byte("not fits"), 0o644); err != nil {
+		t.Fatalf("write readme.txt: %v", err)
+	}
+
+	images, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir: %v", err)
+	}
+
+	if len(images) != 3 {
+		t.Fatalf("got %d images, want 3 (non-FITS file should be ignored)", len(images))
+	}
+	if images[0].Pixels[0] != 1 || images[1].Pixels[0] != 3 || images[2].Pixels[0] != 5 {
+		t.Errorf("images not in sorted filename order: got first pixels %v, %v, %v",
+			images[0].Pixels[0], images[1].Pixels[0], images[2].Pixels[0])
+	}
+}
+
+func TestLoadDir_empty(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := LoadDir(dir); err == nil {
+		t.Fatal("expected an error for a directory with no FITS files")
+	}
+}
+
+func TestLoadDir_missingDir(t *testing.T) {
+	if _, err := LoadDir(filepath.Join(t.TempDir(), "does-not-exist")); err == nil {
+		t.Fatal("expected an error for a missing directory")
+	}
+}

@@ -5,6 +5,10 @@ package fits
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
 
 	"codeberg.org/astrogo/fitsio"
 )
@@ -18,6 +22,9 @@ type Image struct {
 	Instrument string
 	ExposureS  float64
 	DateObs    string
+	JD         float64 // Julian Date derived from DATE-OBS, 0 if unparsable
+
+	Path string // source file path, set by LoadDir
 }
 
 // Width returns the image width in pixels.
@@ -59,14 +66,99 @@ func Load(path string) (*Image, error) {
 		return nil, fmt.Errorf("fits: %s: read pixels: %w", path, err)
 	}
 
+	dateObs := headerString(header, "DATE-OBS")
+
 	return &Image{
 		W:          width,
 		H:          height,
 		Pixels:     pixels,
 		Instrument: headerString(header, "INSTRUME"),
 		ExposureS:  headerFloat(header, "EXPTIME"),
-		DateObs:    headerString(header, "DATE-OBS"),
+		DateObs:    dateObs,
+		JD:         julianDate(dateObs),
+		Path:       path,
 	}, nil
+}
+
+// LoadDir loads every FITS file (.fits, .fit, .fts, case-insensitive) found
+// directly inside dir, sorted by filename, which for a normally-named
+// observing session corresponds to acquisition order.
+func LoadDir(dir string) ([]*Image, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("fits: read dir %s: %w", dir, err)
+	}
+
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if isFITSExt(e.Name()) {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+
+	if len(names) == 0 {
+		return nil, fmt.Errorf("fits: %s: no FITS files found", dir)
+	}
+
+	images := make([]*Image, 0, len(names))
+	for _, name := range names {
+		img, err := Load(filepath.Join(dir, name))
+		if err != nil {
+			return nil, err
+		}
+		images = append(images, img)
+	}
+	return images, nil
+}
+
+func isFITSExt(name string) bool {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".fits", ".fit", ".fts":
+		return true
+	default:
+		return false
+	}
+}
+
+// julianDate converts a FITS DATE-OBS string (ISO 8601, e.g.
+// "2011-08-17T00:48:21" or "2011-08-17") to a Julian Date. Returns 0 if the
+// value can't be parsed.
+func julianDate(dateObs string) float64 {
+	if dateObs == "" {
+		return 0
+	}
+	layouts := []string{
+		"2006-01-02T15:04:05.999999999",
+		"2006-01-02T15:04:05",
+		"2006-01-02",
+	}
+	var t time.Time
+	var err error
+	for _, layout := range layouts {
+		t, err = time.Parse(layout, dateObs)
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		return 0
+	}
+
+	// Fliegel-Van Flandern algorithm for the Julian Day Number, plus the
+	// fractional day from the time-of-day (JD 0 begins at noon UTC, hence
+	// the 12h offset).
+	y, m, d := t.Date()
+	a := (14 - int(m)) / 12
+	y2 := y + 4800 - a
+	m2 := int(m) + 12*a - 3
+	jdn := d + (153*m2+2)/5 + 365*y2 + y2/4 - y2/100 + y2/400 - 32045
+
+	dayFrac := (float64(t.Hour())-12)/24 + float64(t.Minute())/1440 + float64(t.Second())/86400
+	return float64(jdn) + dayFrac
 }
 
 // At returns the pixel intensity at (x, y), where x is the column and y is

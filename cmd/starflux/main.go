@@ -28,15 +28,15 @@ func main() {
 
 	view := ui.NewImageView()
 	levels := ui.Levels{Background: 0, Range: 65535}
-	var current *fits.Image
+	var series []*fits.Image // the loaded session; markers are placed on series[0] and applied to all
 	role := ui.RoleTarget
 	markers := map[ui.StarRole]ui.Marker{}
 
 	redraw := func() {
-		if current == nil {
+		if len(series) == 0 {
 			return
 		}
-		view.SetImage(ui.Render(current, levels))
+		view.SetImage(ui.Render(series[0], levels))
 	}
 
 	view.OnTap = func(x, y float64) {
@@ -81,7 +81,20 @@ func main() {
 		redraw()
 	}
 
-	openButton := widget.NewButton("Open FITS...", func() {
+	loadSeries := func(loaded []*fits.Image, err error) {
+		if err != nil {
+			dialog.ShowError(err, w)
+			return
+		}
+		series = loaded
+		view.ClearMarkers()
+		for k := range markers {
+			delete(markers, k)
+		}
+		redraw()
+	}
+
+	openFileButton := widget.NewButton("Open FITS...", func() {
 		d := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
 			if err != nil {
 				dialog.ShowError(err, w)
@@ -92,23 +105,33 @@ func main() {
 			}
 			defer reader.Close()
 
-			path := reader.URI().Path()
-			img, err := fits.Load(path)
+			img, err := fits.Load(reader.URI().Path())
 			if err != nil {
-				dialog.ShowError(err, w)
+				loadSeries(nil, err)
 				return
 			}
-			current = img
-			view.ClearMarkers()
-			redraw()
+			loadSeries([]*fits.Image{img}, nil)
 		}, w)
 		d.SetFilter(storage.NewExtensionFileFilter([]string{".fits", ".fit", ".fts"}))
 		d.Show()
 	})
 
+	openFolderButton := widget.NewButton("Open Folder...", func() {
+		dialog.NewFolderOpen(func(uri fyne.ListableURI, err error) {
+			if err != nil {
+				dialog.ShowError(err, w)
+				return
+			}
+			if uri == nil {
+				return // user canceled
+			}
+			loadSeries(fits.LoadDir(uri.Path()))
+		}, w).Show()
+	})
+
 	processButton := widget.NewButton("Process", func() {
-		if current == nil {
-			dialog.ShowInformation("Starflux", "Open a FITS image first.", w)
+		if len(series) == 0 {
+			dialog.ShowInformation("Starflux", "Open a FITS image or folder first.", w)
 			return
 		}
 		target, hasTarget := markers[ui.RoleTarget]
@@ -118,28 +141,32 @@ func main() {
 			return
 		}
 
-		targetRes, err := photometry.Measure(current, int(target.X), int(target.Y), centroidHalfWidth, defaultAperture)
-		if err != nil {
-			dialog.ShowError(fmt.Errorf("target: %w", err), w)
-			return
+		obs := make([]timeseries.Observation, 0, len(series))
+		for _, img := range series {
+			targetRes, err := photometry.Measure(img, int(target.X), int(target.Y), centroidHalfWidth, defaultAperture)
+			if err != nil {
+				dialog.ShowError(fmt.Errorf("%s: target: %w", img.Path, err), w)
+				return
+			}
+			compRes, err := photometry.Measure(img, int(comp.X), int(comp.Y), centroidHalfWidth, defaultAperture)
+			if err != nil {
+				dialog.ShowError(fmt.Errorf("%s: comparison: %w", img.Path, err), w)
+				return
+			}
+			obs = append(obs, timeseries.Observation{
+				JD:     img.JD,
+				Target: targetRes,
+				Comp:   compRes,
+			})
 		}
-		compRes, err := photometry.Measure(current, int(comp.X), int(comp.Y), centroidHalfWidth, defaultAperture)
-		if err != nil {
-			dialog.ShowError(fmt.Errorf("comparison: %w", err), w)
+
+		points, errs := timeseries.Series(obs)
+		if len(points) == 0 {
+			dialog.ShowError(fmt.Errorf("no valid measurements across %d image(s): %v", len(series), errs), w)
 			return
 		}
 
-		point, err := timeseries.DifferentialMagnitude(timeseries.Observation{
-			JD:     0,
-			Target: targetRes,
-			Comp:   compRes,
-		})
-		if err != nil {
-			dialog.ShowError(err, w)
-			return
-		}
-
-		showLightCurve(w, []timeseries.Point{point}, "Target")
+		showLightCurve(w, points, "Target")
 	})
 
 	observerMode := widget.NewCheck("Observer mode (red light)", func(on bool) {
@@ -151,7 +178,8 @@ func main() {
 	})
 
 	controls := container.NewVBox(
-		openButton,
+		openFileButton,
+		openFolderButton,
 		widget.NewLabel("Star role:"),
 		roleSelect,
 		clearButton,
