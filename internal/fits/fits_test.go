@@ -57,8 +57,8 @@ func TestLoad(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 
-	if img.Width != 3 || img.Height != 2 {
-		t.Fatalf("got dimensions %dx%d, want 3x2", img.Width, img.Height)
+	if img.Width() != 3 || img.Height() != 2 {
+		t.Fatalf("got dimensions %dx%d, want 3x2", img.Width(), img.Height())
 	}
 	if img.Instrument != "TestCam" {
 		t.Errorf("got Instrument %q, want %q", img.Instrument, "TestCam")

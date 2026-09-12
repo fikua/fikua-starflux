@@ -12,13 +12,19 @@ import (
 // Image holds a single FITS image's pixel data and the header fields the
 // photometry and timeseries packages need.
 type Image struct {
-	Width, Height int
-	Pixels        []float64 // row-major, length Width*Height
+	W, H   int
+	Pixels []float64 // row-major, length W*H
 
 	Instrument string
 	ExposureS  float64
 	DateObs    string
 }
+
+// Width returns the image width in pixels.
+func (img *Image) Width() int { return img.W }
+
+// Height returns the image height in pixels.
+func (img *Image) Height() int { return img.H }
 
 // Load reads a FITS file from disk and returns its primary HDU as an Image.
 func Load(path string) (*Image, error) {
@@ -54,8 +60,8 @@ func Load(path string) (*Image, error) {
 	}
 
 	return &Image{
-		Width:      width,
-		Height:     height,
+		W:          width,
+		H:          height,
 		Pixels:     pixels,
 		Instrument: headerString(header, "INSTRUME"),
 		ExposureS:  headerFloat(header, "EXPTIME"),
@@ -66,7 +72,7 @@ func Load(path string) (*Image, error) {
 // At returns the pixel intensity at (x, y), where x is the column and y is
 // the row, both zero-based.
 func (img *Image) At(x, y int) float64 {
-	return img.Pixels[y*img.Width+x]
+	return img.Pixels[y*img.W+x]
 }
 
 func headerString(h *fitsio.Header, key string) string {
