@@ -4,6 +4,12 @@
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=fikua_fikua-starflux&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=fikua_fikua-starflux)
 [![Coverage](https://sonarcloud.io/api/project_badges/measure?project=fikua_fikua-starflux&metric=coverage)](https://sonarcloud.io/summary/new_code?id=fikua_fikua-starflux)
 [![Maintainability Rating](https://sonarcloud.io/api/project_badges/measure?project=fikua_fikua-starflux&metric=sqale_rating)](https://sonarcloud.io/summary/new_code?id=fikua_fikua-starflux)
+[![Reliability Rating](https://sonarcloud.io/api/project_badges/measure?project=fikua_fikua-starflux&metric=reliability_rating)](https://sonarcloud.io/summary/new_code?id=fikua_fikua-starflux)
+[![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=fikua_fikua-starflux&metric=security_rating)](https://sonarcloud.io/summary/new_code?id=fikua_fikua-starflux)
+[![Bugs](https://sonarcloud.io/api/project_badges/measure?project=fikua_fikua-starflux&metric=bugs)](https://sonarcloud.io/summary/new_code?id=fikua_fikua-starflux)
+[![Vulnerabilities](https://sonarcloud.io/api/project_badges/measure?project=fikua_fikua-starflux&metric=vulnerabilities)](https://sonarcloud.io/summary/new_code?id=fikua_fikua-starflux)
+[![Code Smells](https://sonarcloud.io/api/project_badges/measure?project=fikua_fikua-starflux&metric=code_smells)](https://sonarcloud.io/summary/new_code?id=fikua_fikua-starflux)
+[![Duplicated Lines (%)](https://sonarcloud.io/api/project_badges/measure?project=fikua_fikua-starflux&metric=duplicated_lines_density)](https://sonarcloud.io/summary/new_code?id=fikua_fikua-starflux)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 Light curve photometry tool in Go — spiritual successor to [FotoDif](http://www.astrosurf.com/orodeno/fotodif/).
