@@ -32,7 +32,30 @@ Binaries are not code-signed yet: macOS Gatekeeper and Windows SmartScreen will 
 
 ## Status
 
-Early development, single-image workflow only. Not yet feature-complete — see [CHANGELOG.md](CHANGELOG.md).
+Early development. The core measurement pipeline works end to end (load FITS → mark stars → aperture photometry → differential light curve), but most of the surrounding workflow FotoDif provides is not built yet. Tracking against [FotoDif's feature set](docs/fotodif/README.md):
+
+| Feature | Status |
+|---|---|
+| Load FITS (single file / multiple files / folder) | ✅ Done |
+| Aperture photometry (centroid, aperture, sky annulus) | ✅ Done |
+| Differential magnitude light curve | ✅ Done |
+| Star-picking magnifier loupe | ✅ Done |
+| Observer (red-light) theme | ✅ Done |
+| Named/multiple stars (beyond fixed Target/Comparison/Check) | ❌ Not started |
+| Save/restore session state and star positions | ❌ Not started |
+| Multi-session support ("primera serie" / resume after error) | ❌ Not started |
+| Error tolerance control + resume-from-failure | ❌ Not started |
+| Header metadata (MZERO/FILTER/max ADU) in star picker | ❌ Not started |
+| Configuration (optics, photometry radii, observatory) UI | ❌ Not started |
+| Airmass / transparency / FWHM / drift plots | ❌ Not started |
+| Light-curve tilt correction | ❌ Not started |
+| AAVSO / ALCDEF report export | ❌ Not started |
+| Automatic star detection | ❌ Not started |
+| Variable-star search across a field | ❌ Not started |
+| Period analysis | ❌ Not started |
+| Automatic (watch-folder) processing mode | ❌ Not started |
+
+See [CHANGELOG.md](CHANGELOG.md) for what shipped in each version.
 
 ## Contributing
 
