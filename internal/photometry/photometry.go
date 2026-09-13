@@ -118,6 +118,18 @@ func Measure(img PixelSource, x0, y0 int, halfWidth int, ap Aperture) (Result, e
 	}, nil
 }
 
+// Distance returns the Euclidean pixel distance between two positions.
+func Distance(prevX, prevY, newX, newY float64) float64 {
+	return math.Hypot(newX-prevX, newY-prevY)
+}
+
+// WithinTolerance reports whether a star's newly measured position
+// (newX, newY) has not drifted more than maxPixels from its previous
+// known position (prevX, prevY).
+func WithinTolerance(prevX, prevY, newX, newY, maxPixels float64) bool {
+	return Distance(prevX, prevY, newX, newY) <= maxPixels
+}
+
 // CombineComparisons merges multiple comparison-star measurements into a
 // single synthetic Result by averaging in flux space (NetFlux, ApSum,
 // ApPixels, SkyPerPx, X, Y) rather than magnitude space — flux is what
