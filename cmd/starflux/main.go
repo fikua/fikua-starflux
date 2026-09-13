@@ -17,6 +17,7 @@ import (
 
 	"github.com/fikua/fikua-starflux/internal/fits"
 	"github.com/fikua/fikua-starflux/internal/photometry"
+	"github.com/fikua/fikua-starflux/internal/session"
 	"github.com/fikua/fikua-starflux/internal/timeseries"
 	"github.com/fikua/fikua-starflux/internal/ui"
 )
@@ -28,6 +29,12 @@ var defaultAperture = photometry.Aperture{R: 6, RIn: 10, ROut: 15}
 var fitsFileFilter = zenity.FileFilter{
 	Name:     "FITS images",
 	Patterns: []string{"*.fits", "*.fit", "*.fts"},
+	CaseFold: true,
+}
+
+var starsFileFilter = zenity.FileFilter{
+	Name:     "Starflux star positions",
+	Patterns: []string{"*.json"},
 	CaseFold: true,
 }
 
@@ -177,6 +184,8 @@ func main() {
 		s.starsSelect,
 		removeButton,
 		widget.NewButton("Clear all stars", s.clearStars),
+		widget.NewButton("Save stars...", s.saveStarsAction),
+		widget.NewButton("Load stars...", s.loadStarsAction),
 		widget.NewLabel("Background:"),
 		newLevelSlider(0, 65535, s.levels.Background, func(v float64) { s.levels.Background = v; s.redraw() }),
 		widget.NewLabel("Range:"),
@@ -297,6 +306,47 @@ func (s *appState) openFolderAction() {
 				return
 			}
 			s.loadSeries(fits.LoadDir(path))
+		})
+	}()
+}
+
+func (s *appState) saveStarsAction() {
+	go func() {
+		path, err := zenity.SelectFileSave(zenity.FileFilters{starsFileFilter}, zenity.ConfirmOverwrite())
+		if errors.Is(err, zenity.ErrCanceled) {
+			return
+		}
+		fyne.Do(func() {
+			if err != nil {
+				dialog.ShowError(err, s.win)
+				return
+			}
+			if err := session.Save(s.stars, path); err != nil {
+				dialog.ShowError(err, s.win)
+			}
+		})
+	}()
+}
+
+func (s *appState) loadStarsAction() {
+	go func() {
+		path, err := zenity.SelectFile(zenity.FileFilters{starsFileFilter})
+		if errors.Is(err, zenity.ErrCanceled) {
+			return
+		}
+		fyne.Do(func() {
+			if err != nil {
+				dialog.ShowError(err, s.win)
+				return
+			}
+			stars, err := session.Load(path)
+			if err != nil {
+				dialog.ShowError(err, s.win)
+				return
+			}
+			s.stars = stars
+			s.view.SetStars(s.stars)
+			s.refreshStarsSelect()
 		})
 	}()
 }

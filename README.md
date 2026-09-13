@@ -50,7 +50,8 @@ Early development. The core measurement pipeline works end to end (load FITS →
 | Star-picking magnifier loupe | ✅ Done | — | — |
 | Observer (red-light) theme | ✅ Done | — | — |
 | Named/multiple stars (beyond fixed Target/Comparison/Check) | ✅ Done | High | Alpha |
-| Save/restore session state and star positions | ❌ Not started | High | Alpha |
+| Save/restore star positions ("Guardar/Recuperar posiciones") | ✅ Done | High | Alpha |
+| Save/restore processed session results ("Guardar datos") | ❌ Not started | High | Alpha |
 | Multi-session support ("primera serie" / resume after error) | ❌ Not started | High | Alpha |
 | Error tolerance control + resume-from-failure | ❌ Not started | High | Alpha |
 | Header metadata (MZERO/FILTER/max ADU) in star picker | ❌ Not started | High | Alpha |

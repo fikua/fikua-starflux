@@ -13,6 +13,7 @@ once a first tagged release is published.
 - `photometry.CombineComparisons`: combines multiple comparison stars into one synthetic measurement by averaging flux (not magnitude), the statistically correct way to reduce noise across several comparison stars.
 - Each Target star now produces its own light curve, measured against the flux-averaged combination of all Comparison stars.
 - A "Remove star" control to delete an individual star from the session without clearing all of them.
+- `internal/session`: save and load a session's named star positions as JSON ("Save stars..." / "Load stars..." buttons), so re-opening a series doesn't require re-marking every star by hand.
 
 ### Changed
 - `ui.Marker` renamed to `ui.Star` (adds a `Name` field); `ImageView.AddMarker`/`ClearMarkers` replaced by `SetStars([]Star)`, which redraws the full marker overlay from a single list — fixes a bug where re-tapping the same role left a visually orphaned marker no longer tracked by the app.
