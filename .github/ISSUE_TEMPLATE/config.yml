@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question / discussion
+    url: https://github.com/fikua/fikua-starflux/discussions
+    about: For usage questions or open-ended discussion, not a specific bug or feature.
+  - name: Report a security vulnerability
+    url: https://github.com/fikua/fikua-starflux/security/advisories/new
+    about: Please do not report security vulnerabilities as a public issue.

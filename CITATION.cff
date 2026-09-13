@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Starflux"
+abstract: "Light curve photometry tool in Go — spiritual successor to FotoDif. Native desktop app for differential aperture photometry on FITS image series: exoplanet transits, variable stars, asteroid occultations, and other light-curve science."
+type: software
+authors:
+  - family-names: "Canadés"
+    given-names: "Oriol"
+    alias: "oriolcanades"
+repository-code: "https://github.com/fikua/fikua-starflux"
+license: Apache-2.0
+keywords:
+  - astronomy
+  - photometry
+  - fits
+  - light-curve
+  - variable-stars
+  - exoplanets
+  - citizen-science

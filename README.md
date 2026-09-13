@@ -91,7 +91,15 @@ Not yet done. To confirm Starflux's photometry matches FotoDif's to within round
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines. Bug reports and feature requests go in [GitHub Issues](https://github.com/fikua/fikua-starflux/issues).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines. This project follows a [Code of Conduct](CODE_OF_CONDUCT.md). Bug reports and feature requests go in [GitHub Issues](https://github.com/fikua/fikua-starflux/issues); usage questions go in [Discussions](https://github.com/fikua/fikua-starflux/discussions).
+
+## Security
+
+See [SECURITY.md](SECURITY.md) to report a vulnerability privately.
+
+## Citing Starflux
+
+See [CITATION.cff](CITATION.cff), or use GitHub's "Cite this repository" button.
 
 ## Changelog
 

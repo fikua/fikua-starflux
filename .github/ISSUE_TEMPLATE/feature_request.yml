@@ -1,0 +1,21 @@
+name: Feature request
+description: Suggest a FotoDif feature or a new capability
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        See the [feature-parity table in the README](https://github.com/fikua/fikua-starflux#status) first — it may already be tracked.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve, or what workflow would it improve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: If this mirrors a FotoDif feature, a screenshot or a link to the relevant section of its manual helps a lot.
+    validations:
+      required: false

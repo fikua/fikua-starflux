@@ -1,0 +1,43 @@
+name: Bug report
+description: Something isn't working as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Precise, reproducible reports get fixed faster.
+  - type: textarea
+    id: expected-vs-actual
+    attributes:
+      label: What did you expect to happen, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro-steps
+    attributes:
+      label: Steps to reproduce
+      description: Include a sample FITS file if the bug is related to loading or measuring an image (attach it, or a link to it).
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Starflux version
+      description: Shown in the app, or the release tag / commit you built from.
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - macOS
+        - Windows
+        - Linux
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output or error message
+      render: shell
