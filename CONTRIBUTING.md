@@ -4,14 +4,19 @@ Thanks for your interest in contributing.
 
 ## Development setup
 
-Requires Go (see `go.mod` for the minimum version).
+Requires Go (see `go.mod` for the minimum version) and [Git LFS](https://git-lfs.com) (`testdata/fits/` holds ~85MB of reference FITS fixtures tracked via LFS).
 
 ```sh
+git lfs install   # once per machine
+git clone https://github.com/fikua/fikua-starflux.git
+
 go build ./...
 go vet ./...
 go test ./...
 gofmt -l .   # should print nothing
 ```
+
+If you don't need the test fixtures (e.g. you're only reading code), skip downloading them with `GIT_LFS_SKIP_SMUDGE=1 git clone ...`.
 
 ## Making changes
 
