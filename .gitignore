@@ -5,3 +5,8 @@
 *.fits
 *.fit
 .DS_Store
+
+# Reference FITS fixtures (tracked via Git LFS, see testdata/README.md)
+# are the one deliberate exception to the *.fits/*.fit ignore above.
+!/testdata/fits/*.fit
+!/testdata/fits/*.fits
