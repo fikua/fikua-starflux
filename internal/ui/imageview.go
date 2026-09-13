@@ -42,9 +42,11 @@ func (r StarRole) String() string {
 	}
 }
 
-// Marker is a star position picked by the user on the displayed image, in
-// image pixel coordinates.
-type Marker struct {
+// Star is a named star position picked by the user on the displayed image,
+// in image pixel coordinates. Name is user-supplied and expected to be
+// unique within a session — ImageView itself does not enforce that.
+type Star struct {
+	Name string
 	Role StarRole
 	X, Y float64
 }
@@ -59,7 +61,8 @@ type ImageView struct {
 	overlay *fyne.Container
 	loupe   *canvas.Image // magnifier preview, follows the cursor
 
-	imgW, imgH int // native pixel dimensions of the loaded image
+	imgW, imgH int    // native pixel dimensions of the loaded image
+	stars      []Star // last set passed to SetStars, used to re-layout on resize
 
 	// OnTap is called with image pixel coordinates whenever the user
 	// clicks on the displayed image.
@@ -85,8 +88,9 @@ func NewImageView() *ImageView {
 	return v
 }
 
-// SetImage replaces the displayed frame. Existing markers are preserved;
-// call ClearMarkers first if the new frame invalidates them.
+// SetImage replaces the displayed frame. Existing stars are preserved and
+// re-laid-out over the new frame; call SetStars(nil) first if the new
+// frame invalidates them.
 func (v *ImageView) SetImage(img image.Image) {
 	b := img.Bounds()
 	v.imgW, v.imgH = b.Dx(), b.Dy()
@@ -95,22 +99,30 @@ func (v *ImageView) SetImage(img image.Image) {
 	v.layoutMarkers()
 }
 
-// ClearMarkers removes all star markers from the view.
-func (v *ImageView) ClearMarkers() {
-	v.overlay.RemoveAll()
+// SetStars replaces the full set of star markers shown over the image and
+// redraws the overlay from scratch. Callers should call this again after
+// any add/rename/remove/role change rather than mutating markers
+// incrementally.
+func (v *ImageView) SetStars(stars []Star) {
+	v.stars = stars
+	v.redrawOverlay()
 }
 
-// AddMarker draws a labeled circle at the given image pixel coordinates.
-func (v *ImageView) AddMarker(m Marker) {
-	circle := canvas.NewCircle(nil)
-	circle.StrokeColor = markerColor(m.Role)
-	circle.StrokeWidth = 2
-	label := canvas.NewText(m.Role.String(), markerColor(m.Role))
-	label.TextSize = 12
+// redrawOverlay clears the overlay and redraws a labeled circle for every
+// star in v.stars, at its current on-screen position.
+func (v *ImageView) redrawOverlay() {
+	v.overlay.RemoveAll()
+	for _, s := range v.stars {
+		circle := canvas.NewCircle(nil)
+		circle.StrokeColor = markerColor(s.Role)
+		circle.StrokeWidth = 2
+		label := canvas.NewText(s.Name, markerColor(s.Role))
+		label.TextSize = 12
 
-	v.overlay.Add(circle)
-	v.overlay.Add(label)
-	v.positionMarker(circle, label, m)
+		v.overlay.Add(circle)
+		v.overlay.Add(label)
+		v.positionMarker(circle, label, s)
+	}
 }
 
 // markerColor picks a fixed, high-contrast color per star role so markers
@@ -248,18 +260,20 @@ func cropImage(src image.Image, x0, y0, x1, y1 int) (image.Image, bool) {
 	return si.SubImage(rect), true
 }
 
+// layoutMarkers re-lays-out the current stars, e.g. after the widget is
+// resized or a new image is loaded.
 func (v *ImageView) layoutMarkers() {
-	v.overlay.Refresh()
+	v.redrawOverlay()
 }
 
-func (v *ImageView) positionMarker(circle *canvas.Circle, label *canvas.Text, m Marker) {
+func (v *ImageView) positionMarker(circle *canvas.Circle, label *canvas.Text, s Star) {
 	size := v.Size()
 	scale := imageDisplayScale(size, v.imgW, v.imgH)
 	offsetX, offsetY := imageDisplayOffset(size, v.imgW, v.imgH, scale)
 
 	const r = 10 // on-screen marker radius, in pixels, independent of zoom
-	cx := offsetX + float32(m.X)*scale
-	cy := offsetY + float32(m.Y)*scale
+	cx := offsetX + float32(s.X)*scale
+	cy := offsetY + float32(s.Y)*scale
 
 	circle.Move(fyne.NewPos(cx-r, cy-r))
 	circle.Resize(fyne.NewSize(r*2, r*2))

@@ -37,7 +37,7 @@ func TestMarkerColor_isDistinctPerRole(t *testing.T) {
 	}
 }
 
-func TestImageView_setImageAndMarkers(t *testing.T) {
+func TestImageView_setImageAndStars(t *testing.T) {
 	v := NewImageView()
 	w := test.NewWindow(v)
 	defer w.Close()
@@ -50,15 +50,42 @@ func TestImageView_setImageAndMarkers(t *testing.T) {
 		t.Errorf("got imgW/imgH %d/%d, want 100/50", v.imgW, v.imgH)
 	}
 
-	v.AddMarker(Marker{Role: RoleTarget, X: 10, Y: 10})
-	v.AddMarker(Marker{Role: RoleComparison, X: 20, Y: 20})
+	v.SetStars([]Star{
+		{Name: "VAR-1", Role: RoleTarget, X: 10, Y: 10},
+		{Name: "CONTROL", Role: RoleComparison, X: 20, Y: 20},
+	})
 	if got := len(v.overlay.Objects); got != 4 { // 2 circles + 2 labels
-		t.Errorf("got %d overlay objects after 2 markers, want 4", got)
+		t.Errorf("got %d overlay objects after 2 stars, want 4", got)
 	}
 
-	v.ClearMarkers()
+	v.SetStars(nil)
 	if got := len(v.overlay.Objects); got != 0 {
-		t.Errorf("got %d overlay objects after ClearMarkers, want 0", got)
+		t.Errorf("got %d overlay objects after SetStars(nil), want 0", got)
+	}
+}
+
+func TestImageView_setStarsReplacesPreviousSet(t *testing.T) {
+	v := NewImageView()
+	w := test.NewWindow(v)
+	defer w.Close()
+	w.Resize(fyne.NewSize(400, 300))
+	v.SetImage(image.NewGray(image.Rect(0, 0, 100, 50)))
+
+	v.SetStars([]Star{
+		{Name: "VAR-1", Role: RoleTarget, X: 10, Y: 10},
+		{Name: "CONTROL", Role: RoleComparison, X: 20, Y: 20},
+	})
+	if got := len(v.overlay.Objects); got != 4 {
+		t.Fatalf("got %d overlay objects after first SetStars, want 4", got)
+	}
+
+	// A second SetStars call with a single star must fully replace the
+	// overlay, not add to it — this is the regression test for the old
+	// AddMarker behavior, which always appended and left visually
+	// orphaned circles for stars no longer tracked by the caller.
+	v.SetStars([]Star{{Name: "VAR-1", Role: RoleTarget, X: 15, Y: 15}})
+	if got := len(v.overlay.Objects); got != 2 {
+		t.Errorf("got %d overlay objects after second SetStars, want 2 (old markers must not linger)", got)
 	}
 }
 

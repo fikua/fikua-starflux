@@ -96,6 +96,39 @@ func Measure(img PixelSource, x0, y0 int, halfWidth int, ap Aperture) (Result, e
 	}, nil
 }
 
+// CombineComparisons merges multiple comparison-star measurements into a
+// single synthetic Result by averaging in flux space (NetFlux, ApSum,
+// ApPixels, SkyPerPx, X, Y) rather than magnitude space — flux is what
+// physically adds, so this is the statistically correct way to combine
+// independent brightness measurements and matches standard multi-
+// comparison differential photometry practice. Averaging magnitudes
+// instead would bias the combined result toward the faintest star.
+func CombineComparisons(results []Result) (Result, error) {
+	if len(results) == 0 {
+		return Result{}, fmt.Errorf("photometry: CombineComparisons: no results to combine")
+	}
+
+	var sumX, sumY, sumSky, sumApSum, sumNetFlux, sumApPixels float64
+	for _, r := range results {
+		sumX += r.X
+		sumY += r.Y
+		sumSky += r.SkyPerPx
+		sumApSum += r.ApSum
+		sumNetFlux += r.NetFlux
+		sumApPixels += r.ApPixels
+	}
+
+	n := float64(len(results))
+	return Result{
+		X:        sumX / n,
+		Y:        sumY / n,
+		SkyPerPx: sumSky / n,
+		ApSum:    sumApSum / n,
+		NetFlux:  sumNetFlux / n,
+		ApPixels: sumApPixels / n,
+	}, nil
+}
+
 // apertureSum sums pixel ADUs within radius r of (cx, cy). Pixels straddling
 // the aperture edge are weighted by the fraction of their area estimated to
 // lie inside the circle, via 4x4 subpixel sampling.

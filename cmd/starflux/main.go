@@ -38,11 +38,11 @@ type appState struct {
 	view   *ui.ImageView
 	levels ui.Levels
 
-	series  []*fits.Image // the loaded session; markers are placed on series[0] and applied to all
-	role    ui.StarRole
-	markers map[ui.StarRole]ui.Marker
+	series []*fits.Image // the loaded session; stars are placed on series[0] and applied to all
+	stars  []ui.Star     // open list of named stars, multiple per role
 
 	seriesLabel *widget.Label
+	starsSelect *widget.Select // populated with current star names, for removal
 }
 
 func newAppState(win fyne.Window) *appState {
@@ -50,9 +50,8 @@ func newAppState(win fyne.Window) *appState {
 		win:         win,
 		view:        ui.NewImageView(),
 		levels:      ui.Levels{Background: 0, Range: 65535},
-		role:        ui.RoleTarget,
-		markers:     map[ui.StarRole]ui.Marker{},
 		seriesLabel: widget.NewLabel("No images loaded"),
+		starsSelect: widget.NewSelect(nil, nil),
 	}
 }
 
@@ -63,11 +62,51 @@ func (s *appState) redraw() {
 	s.view.SetImage(ui.Render(s.series[0], s.levels))
 }
 
-func (s *appState) clearMarkers() {
-	s.view.ClearMarkers()
-	for k := range s.markers {
-		delete(s.markers, k)
+func (s *appState) clearStars() {
+	s.stars = nil
+	s.view.SetStars(nil)
+	s.refreshStarsSelect()
+}
+
+// refreshStarsSelect keeps the star-removal dropdown's options in sync with
+// the current star list.
+func (s *appState) refreshStarsSelect() {
+	names := make([]string, len(s.stars))
+	for i, st := range s.stars {
+		names[i] = fmt.Sprintf("%s (%s)", st.Name, st.Role)
 	}
+	s.starsSelect.Options = names
+	s.starsSelect.ClearSelected()
+	s.starsSelect.Refresh()
+}
+
+// hasStarNamed reports whether a star with the given name already exists
+// in the session (names must be unique).
+func (s *appState) hasStarNamed(name string) bool {
+	for _, st := range s.stars {
+		if st.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// addStar appends a new named star and refreshes the view and removal list.
+func (s *appState) addStar(star ui.Star) {
+	s.stars = append(s.stars, star)
+	s.view.SetStars(s.stars)
+	s.refreshStarsSelect()
+}
+
+// removeStarAt removes the star at the given index (as shown in
+// starsSelect) and refreshes the view and removal list.
+func (s *appState) removeStarAt(index int) {
+	if index < 0 || index >= len(s.stars) {
+		return
+	}
+	s.stars = append(s.stars[:index], s.stars[index+1:]...)
+	s.view.SetStars(s.stars)
+	s.refreshStarsSelect()
 }
 
 // loadSeries replaces the loaded session. err is a fatal, load-aborting
@@ -80,7 +119,7 @@ func (s *appState) loadSeries(loaded []*fits.Image, loadErrs []fits.LoadError, e
 		return
 	}
 	s.series = loaded
-	s.clearMarkers()
+	s.clearStars()
 	if len(s.series) == 1 {
 		s.seriesLabel.SetText(fmt.Sprintf("Loaded 1 image: %s", filepath.Base(s.series[0].Path)))
 	} else {
@@ -111,19 +150,33 @@ func main() {
 	s := newAppState(w)
 
 	s.view.OnTap = func(x, y float64) {
-		m := ui.Marker{Role: s.role, X: x, Y: y}
-		s.markers[s.role] = m
-		s.view.AddMarker(m)
+		showStarDialog(s.win, func(name string, role ui.StarRole) {
+			if s.hasStarNamed(name) {
+				dialog.ShowInformation("Starflux", fmt.Sprintf("A star named %q already exists.", name), s.win)
+				return
+			}
+			s.addStar(ui.Star{Name: name, Role: role, X: x, Y: y})
+		})
 	}
+
+	removeButton := widget.NewButton("Remove star", func() {
+		idx := s.starsSelect.SelectedIndex()
+		if idx < 0 {
+			dialog.ShowInformation("Starflux", "Select a star to remove first.", s.win)
+			return
+		}
+		s.removeStarAt(idx)
+	})
 
 	controls := container.NewVBox(
 		widget.NewButton("Open FITS...", s.openFileAction),
 		widget.NewButton("Open Files...", s.openFilesAction),
 		widget.NewButton("Open Folder...", s.openFolderAction),
 		s.seriesLabel,
-		widget.NewLabel("Star role:"),
-		newRoleSelect(s),
-		widget.NewButton("Clear markers", s.clearMarkers),
+		widget.NewLabel("Stars:"),
+		s.starsSelect,
+		removeButton,
+		widget.NewButton("Clear all stars", s.clearStars),
 		widget.NewLabel("Background:"),
 		newLevelSlider(0, 65535, s.levels.Background, func(v float64) { s.levels.Background = v; s.redraw() }),
 		widget.NewLabel("Range:"),
@@ -138,22 +191,44 @@ func main() {
 	w.ShowAndRun()
 }
 
-func newRoleSelect(s *appState) *widget.Select {
-	sel := widget.NewSelect(
+// showStarDialog prompts for a star's name and role after a tap on the
+// image, following FotoDif's workflow: clicking a star opens a window to
+// name it and mark it as Target ("Variable"), Comparison ("Calibrado"), or
+// Check. onConfirm is called only if the user confirms with a non-empty
+// name.
+func showStarDialog(parent fyne.Window, onConfirm func(name string, role ui.StarRole)) {
+	nameEntry := widget.NewEntry()
+	nameEntry.SetPlaceHolder("e.g. VAR-1, CONTROL")
+
+	roleGroup := widget.NewRadioGroup(
 		[]string{ui.RoleTarget.String(), ui.RoleComparison.String(), ui.RoleCheck.String()},
-		func(text string) {
-			switch text {
-			case ui.RoleComparison.String():
-				s.role = ui.RoleComparison
-			case ui.RoleCheck.String():
-				s.role = ui.RoleCheck
-			default:
-				s.role = ui.RoleTarget
-			}
-		},
+		nil,
 	)
-	sel.SetSelectedIndex(0)
-	return sel
+	roleGroup.SetSelected(ui.RoleTarget.String())
+
+	items := []*widget.FormItem{
+		widget.NewFormItem("Name", nameEntry),
+		widget.NewFormItem("Role", roleGroup),
+	}
+
+	dialog.NewForm("New star", "Add", "Cancel", items, func(confirmed bool) {
+		name := strings.TrimSpace(nameEntry.Text)
+		if !confirmed || name == "" {
+			return
+		}
+		onConfirm(name, parseRole(roleGroup.Selected))
+	}, parent).Show()
+}
+
+func parseRole(text string) ui.StarRole {
+	switch text {
+	case ui.RoleComparison.String():
+		return ui.RoleComparison
+	case ui.RoleCheck.String():
+		return ui.RoleCheck
+	default:
+		return ui.RoleTarget
+	}
 }
 
 func newLevelSlider(min, max, initial float64, onChanged func(float64)) *widget.Slider {
@@ -226,50 +301,76 @@ func (s *appState) openFolderAction() {
 	}()
 }
 
+// starsWithRole returns the subset of stars matching role, in the order
+// they were added.
+func starsWithRole(stars []ui.Star, role ui.StarRole) []ui.Star {
+	var out []ui.Star
+	for _, st := range stars {
+		if st.Role == role {
+			out = append(out, st)
+		}
+	}
+	return out
+}
+
 func (s *appState) processAction() {
 	if len(s.series) == 0 {
 		dialog.ShowInformation("Starflux", "Open a FITS image or folder first.", s.win)
 		return
 	}
-	target, hasTarget := s.markers[ui.RoleTarget]
-	comp, hasComp := s.markers[ui.RoleComparison]
-	if !hasTarget || !hasComp {
-		dialog.ShowInformation("Starflux", "Place both a Target and a Comparison marker first.", s.win)
+
+	targets := starsWithRole(s.stars, ui.RoleTarget)
+	comps := starsWithRole(s.stars, ui.RoleComparison)
+	if len(targets) == 0 || len(comps) == 0 {
+		dialog.ShowInformation("Starflux", "Place at least one Target and one Comparison star first.", s.win)
 		return
 	}
 
-	obs, err := s.measureSeries(target, comp)
-	if err != nil {
-		dialog.ShowError(err, s.win)
-		return
-	}
+	for _, target := range targets {
+		obs, err := s.measureSeries(target, comps)
+		if err != nil {
+			dialog.ShowError(err, s.win)
+			continue
+		}
 
-	points, errs := timeseries.Series(obs)
-	if len(points) == 0 {
-		dialog.ShowError(fmt.Errorf("no valid measurements across %d image(s): %v", len(s.series), errs), s.win)
-		return
-	}
+		points, errs := timeseries.Series(obs)
+		if len(points) == 0 {
+			dialog.ShowError(fmt.Errorf("%s: no valid measurements across %d image(s): %v", target.Name, len(s.series), errs), s.win)
+			continue
+		}
 
-	showLightCurve(s.win, points, "Target")
+		showLightCurve(s.win, points, target.Name)
+	}
 }
 
-// measureSeries runs aperture photometry for the target and comparison
-// markers on every image in the loaded series.
-func (s *appState) measureSeries(target, comp ui.Marker) ([]timeseries.Observation, error) {
+// measureSeries runs aperture photometry for one target star and combines
+// all comparison stars (by averaged flux, see photometry.CombineComparisons)
+// into a synthetic comparison measurement, for every image in the series.
+func (s *appState) measureSeries(target ui.Star, comps []ui.Star) ([]timeseries.Observation, error) {
 	obs := make([]timeseries.Observation, 0, len(s.series))
 	for _, img := range s.series {
 		targetRes, err := photometry.Measure(img, int(target.X), int(target.Y), centroidHalfWidth, defaultAperture)
 		if err != nil {
-			return nil, fmt.Errorf("%s: target: %w", img.Path, err)
+			return nil, fmt.Errorf("%s: %s: target: %w", img.Path, target.Name, err)
 		}
-		compRes, err := photometry.Measure(img, int(comp.X), int(comp.Y), centroidHalfWidth, defaultAperture)
+
+		compResults := make([]photometry.Result, 0, len(comps))
+		for _, c := range comps {
+			r, err := photometry.Measure(img, int(c.X), int(c.Y), centroidHalfWidth, defaultAperture)
+			if err != nil {
+				return nil, fmt.Errorf("%s: comparison %s: %w", img.Path, c.Name, err)
+			}
+			compResults = append(compResults, r)
+		}
+		combinedComp, err := photometry.CombineComparisons(compResults)
 		if err != nil {
-			return nil, fmt.Errorf("%s: comparison: %w", img.Path, err)
+			return nil, fmt.Errorf("%s: %w", img.Path, err)
 		}
+
 		obs = append(obs, timeseries.Observation{
 			JD:     img.JD,
 			Target: targetRes,
-			Comp:   compRes,
+			Comp:   combinedComp,
 		})
 	}
 	return obs, nil

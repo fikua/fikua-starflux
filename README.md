@@ -49,7 +49,7 @@ Early development. The core measurement pipeline works end to end (load FITS →
 | Differential magnitude light curve | ✅ Done | — | — |
 | Star-picking magnifier loupe | ✅ Done | — | — |
 | Observer (red-light) theme | ✅ Done | — | — |
-| Named/multiple stars (beyond fixed Target/Comparison/Check) | ❌ Not started | High | Alpha |
+| Named/multiple stars (beyond fixed Target/Comparison/Check) | ✅ Done | High | Alpha |
 | Save/restore session state and star positions | ❌ Not started | High | Alpha |
 | Multi-session support ("primera serie" / resume after error) | ❌ Not started | High | Alpha |
 | Error tolerance control + resume-from-failure | ❌ Not started | High | Alpha |

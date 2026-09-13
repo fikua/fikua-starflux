@@ -154,3 +154,37 @@ func TestMedian(t *testing.T) {
 		}
 	}
 }
+
+func TestCombineComparisons_averagesFlux(t *testing.T) {
+	results := []Result{
+		{X: 10, Y: 20, SkyPerPx: 100, ApSum: 5000, NetFlux: 4000, ApPixels: 113},
+		{X: 12, Y: 22, SkyPerPx: 110, ApSum: 7000, NetFlux: 6000, ApPixels: 113},
+	}
+
+	got, err := CombineComparisons(results)
+	if err != nil {
+		t.Fatalf("CombineComparisons: %v", err)
+	}
+
+	want := Result{X: 11, Y: 21, SkyPerPx: 105, ApSum: 6000, NetFlux: 5000, ApPixels: 113}
+	if got != want {
+		t.Errorf("CombineComparisons(%v) = %+v, want %+v", results, got, want)
+	}
+}
+
+func TestCombineComparisons_singleResultIsUnchanged(t *testing.T) {
+	r := Result{X: 5, Y: 6, SkyPerPx: 50, ApSum: 900, NetFlux: 800, ApPixels: 42}
+	got, err := CombineComparisons([]Result{r})
+	if err != nil {
+		t.Fatalf("CombineComparisons: %v", err)
+	}
+	if got != r {
+		t.Errorf("CombineComparisons(single) = %+v, want unchanged %+v", got, r)
+	}
+}
+
+func TestCombineComparisons_emptyIsError(t *testing.T) {
+	if _, err := CombineComparisons(nil); err == nil {
+		t.Fatal("expected an error when combining zero results")
+	}
+}
