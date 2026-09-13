@@ -10,3 +10,8 @@
 # are the one deliberate exception to the *.fits/*.fit ignore above.
 !/testdata/fits/*.fit
 !/testdata/fits/*.fits
+
+# Internal science/knowledge docs (Catalan, working notes to understand
+# the astronomy/math behind the code) — not published yet; may later be
+# translated and moved into public docs or the project website.
+/docs/science/
