@@ -24,6 +24,10 @@ type Image struct {
 	DateObs    string
 	JD         float64 // Julian Date derived from DATE-OBS, 0 if unparsable
 
+	MZero    float64 // photometric zero-point, only meaningful if HasMZero
+	HasMZero bool    // whether the header carried an MZERO card
+	Filter   string  // FILTER card value, "" if absent
+
 	Path string // source file path, set by LoadDir
 }
 
@@ -67,6 +71,7 @@ func Load(path string) (*Image, error) {
 	}
 
 	dateObs := headerString(header, "DATE-OBS")
+	mzero, hasMZero := headerFloatOK(header, "MZERO")
 
 	return &Image{
 		W:          width,
@@ -76,6 +81,9 @@ func Load(path string) (*Image, error) {
 		ExposureS:  headerFloat(header, "EXPTIME"),
 		DateObs:    dateObs,
 		JD:         julianDate(dateObs),
+		MZero:      mzero,
+		HasMZero:   hasMZero,
+		Filter:     headerString(header, "FILTER"),
 		Path:       path,
 	}, nil
 }
@@ -292,20 +300,28 @@ func headerString(h *fitsio.Header, key string) string {
 }
 
 func headerFloat(h *fitsio.Header, key string) float64 {
+	v, _ := headerFloatOK(h, key)
+	return v
+}
+
+// headerFloatOK is like headerFloat but also reports whether the card was
+// present with a numeric value, so callers can distinguish "absent" from
+// "present and legitimately zero".
+func headerFloatOK(h *fitsio.Header, key string) (float64, bool) {
 	card := h.Get(key)
 	if card == nil {
-		return 0
+		return 0, false
 	}
 	switch v := card.Value.(type) {
 	case float64:
-		return v
+		return v, true
 	case float32:
-		return float64(v)
+		return float64(v), true
 	case int:
-		return float64(v)
+		return float64(v), true
 	case int64:
-		return float64(v)
+		return float64(v), true
 	default:
-		return 0
+		return 0, false
 	}
 }

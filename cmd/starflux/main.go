@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"math"
 	"path/filepath"
 	"strings"
 
@@ -157,7 +158,10 @@ func main() {
 	s := newAppState(w)
 
 	s.view.OnTap = func(x, y float64) {
-		showStarDialog(s.win, func(name string, role ui.StarRole) {
+		if len(s.series) == 0 {
+			return
+		}
+		showStarDialog(s.win, s.series[0], x, y, func(name string, role ui.StarRole) {
 			if s.hasStarNamed(name) {
 				dialog.ShowInformation("Starflux", fmt.Sprintf("A star named %q already exists.", name), s.win)
 				return
@@ -203,9 +207,12 @@ func main() {
 // showStarDialog prompts for a star's name and role after a tap on the
 // image, following FotoDif's workflow: clicking a star opens a window to
 // name it and mark it as Target ("Variable"), Comparison ("Calibrado"), or
-// Check. onConfirm is called only if the user confirms with a non-empty
-// name.
-func showStarDialog(parent fyne.Window, onConfirm func(name string, role ui.StarRole)) {
+// Check. It also shows the peak ADU under the cursor (a guide against
+// saturation) and, when the header provides them, the instrumental
+// magnitude (from MZERO) and the FILTER used — matching FotoDif's star
+// selection window. onConfirm is called only if the user confirms with a
+// non-empty name.
+func showStarDialog(parent fyne.Window, img *fits.Image, x, y float64, onConfirm func(name string, role ui.StarRole)) {
 	nameEntry := widget.NewEntry()
 	nameEntry.SetPlaceHolder("e.g. VAR-1, CONTROL")
 
@@ -215,9 +222,19 @@ func showStarDialog(parent fyne.Window, onConfirm func(name string, role ui.Star
 	)
 	roleGroup.SetSelected(ui.RoleTarget.String())
 
+	maxADU := photometry.MaxADU(img, int(x), int(y), centroidHalfWidth)
+
 	items := []*widget.FormItem{
 		widget.NewFormItem("Name", nameEntry),
 		widget.NewFormItem("Role", roleGroup),
+		widget.NewFormItem("Max ADU", widget.NewLabel(fmt.Sprintf("%.0f", maxADU))),
+	}
+	if img.HasMZero {
+		mag := img.MZero - 2.5*math.Log10(maxADU)
+		items = append(items, widget.NewFormItem("Magnitude", widget.NewLabel(fmt.Sprintf("%.2f", mag))))
+	}
+	if img.Filter != "" {
+		items = append(items, widget.NewFormItem("Filter", widget.NewLabel(img.Filter)))
 	}
 
 	dialog.NewForm("New star", "Add", "Cancel", items, func(confirmed bool) {

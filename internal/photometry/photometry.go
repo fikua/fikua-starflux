@@ -68,6 +68,28 @@ func Centroid(img PixelSource, x0, y0 int, halfWidth int, bg float64) (x, y floa
 	return sumIX / sumI, sumIY / sumI, nil
 }
 
+// MaxADU returns the brightest pixel value within a box of the given
+// half-width around (x0, y0), as a guide for spotting sensor saturation
+// before it's baked into hours of imaging (mirrors the max-pixel value
+// FotoDif shows in its star-selection window).
+func MaxADU(img PixelSource, x0, y0 int, halfWidth int) float64 {
+	max := 0.0
+	for j := y0 - halfWidth; j <= y0+halfWidth; j++ {
+		if j < 0 || j >= img.Height() {
+			continue
+		}
+		for i := x0 - halfWidth; i <= x0+halfWidth; i++ {
+			if i < 0 || i >= img.Width() {
+				continue
+			}
+			if v := img.At(i, j); v > max {
+				max = v
+			}
+		}
+	}
+	return max
+}
+
 // Measure performs full aperture photometry for a star centered at
 // (x0, y0), using ap to size the aperture and sky annulus.
 func Measure(img PixelSource, x0, y0 int, halfWidth int, ap Aperture) (Result, error) {

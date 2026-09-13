@@ -92,6 +92,62 @@ func TestLoad(t *testing.T) {
 	if got := img.At(0, 0); got != 0 {
 		t.Errorf("At(0, 0) = %v, want 0", got)
 	}
+
+	if img.HasMZero {
+		t.Error("got HasMZero = true, want false (no MZERO card written)")
+	}
+	if img.Filter != "" {
+		t.Errorf("got Filter %q, want empty (no FILTER card written)", img.Filter)
+	}
+}
+
+func TestLoad_withMZeroAndFilter(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test_mzero.fits")
+
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	defer f.Close()
+	file, err := fitsio.Create(f)
+	if err != nil {
+		t.Fatalf("fitsio.Create: %v", err)
+	}
+	defer file.Close()
+
+	img := fitsio.NewImage(16, []int{1, 1})
+	defer img.Close()
+	if err := img.Header().Append(
+		fitsio.Card{Name: "MZERO", Value: 25.5, Comment: "photometric zero-point"},
+		fitsio.Card{Name: "FILTER", Value: "R", Comment: "filter used"},
+	); err != nil {
+		t.Fatalf("append cards: %v", err)
+	}
+	if err := img.Write([]int16{100}); err != nil {
+		t.Fatalf("write image data: %v", err)
+	}
+	if err := file.Write(img); err != nil {
+		t.Fatalf("write image to file: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close file: %v", err)
+	}
+	f.Close()
+
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if !loaded.HasMZero {
+		t.Error("got HasMZero = false, want true (MZERO card was written)")
+	}
+	if loaded.MZero != 25.5 {
+		t.Errorf("got MZero %v, want 25.5", loaded.MZero)
+	}
+	if loaded.Filter != "R" {
+		t.Errorf("got Filter %q, want %q", loaded.Filter, "R")
+	}
 }
 
 func TestLoad_bitpix16(t *testing.T) {

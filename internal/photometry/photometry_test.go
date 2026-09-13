@@ -113,6 +113,26 @@ func TestApertureSum_flatDisk(t *testing.T) {
 	}
 }
 
+func TestMaxADU_findsPeakInBox(t *testing.T) {
+	g := newGrid(41, 41, 100) // flat background at 100 ADU
+	g.set(20, 20, 60000)      // a bright, near-saturated pixel
+
+	got := MaxADU(g, 20, 20, 10)
+	if got != 60000 {
+		t.Errorf("MaxADU = %v, want 60000", got)
+	}
+}
+
+func TestMaxADU_ignoresPixelsOutsideBox(t *testing.T) {
+	g := newGrid(41, 41, 100)
+	g.set(5, 5, 65000) // bright pixel well outside the box around (20, 20)
+
+	got := MaxADU(g, 20, 20, 3)
+	if got != 100 {
+		t.Errorf("MaxADU = %v, want 100 (the flat background, not the distant bright pixel)", got)
+	}
+}
+
 func TestMeasure_knownFlux(t *testing.T) {
 	g := newGrid(61, 61, 50) // flat sky at 50 ADU
 	addGaussianStar(g, 30, 30, 8000, 3)
