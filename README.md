@@ -2,6 +2,7 @@
 
 [![Build](https://github.com/fikua/fikua-starflux/actions/workflows/build.yml/badge.svg)](https://github.com/fikua/fikua-starflux/actions/workflows/build.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22737469.svg)](https://doi.org/10.5281/zenodo.22737469)
 
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=fikua_fikua-starflux&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=fikua_fikua-starflux)
 [![Coverage](https://sonarcloud.io/api/project_badges/measure?project=fikua_fikua-starflux&metric=coverage)](https://sonarcloud.io/summary/new_code?id=fikua_fikua-starflux)

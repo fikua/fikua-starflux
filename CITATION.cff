@@ -8,6 +8,7 @@ authors:
     given-names: "Oriol"
     alias: "oriolcanades"
 repository-code: "https://github.com/fikua/fikua-starflux"
+doi: 10.5281/zenodo.22737469
 license: Apache-2.0
 keywords:
   - astronomy
