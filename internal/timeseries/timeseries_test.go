@@ -114,3 +114,43 @@ func TestSeries_skipsBadEpochsAndReportsErrors(t *testing.T) {
 		t.Errorf("got JDs %v, %v, want 1, 3", points[0].JD, points[1].JD)
 	}
 }
+
+func TestMergeSorted_concatenatesAndSortsByJD(t *testing.T) {
+	prev := []Point{{JD: 1}, {JD: 3}}
+	next := []Point{{JD: 2}, {JD: 4}} // deliberately interleaved with prev
+
+	got := MergeSorted(prev, next)
+
+	if len(got) != 4 {
+		t.Fatalf("got %d points, want 4", len(got))
+	}
+	wantJD := []float64{1, 2, 3, 4}
+	for i, want := range wantJD {
+		if got[i].JD != want {
+			t.Errorf("got[%d].JD = %v, want %v", i, got[i].JD, want)
+		}
+	}
+}
+
+func TestMergeSorted_emptyPrev(t *testing.T) {
+	next := []Point{{JD: 5}, {JD: 6}}
+	got := MergeSorted(nil, next)
+	if len(got) != 2 || got[0].JD != 5 || got[1].JD != 6 {
+		t.Errorf("MergeSorted(nil, next) = %+v, want next unchanged", got)
+	}
+}
+
+func TestMergeSorted_emptyNext(t *testing.T) {
+	prev := []Point{{JD: 5}, {JD: 6}}
+	got := MergeSorted(prev, nil)
+	if len(got) != 2 || got[0].JD != 5 || got[1].JD != 6 {
+		t.Errorf("MergeSorted(prev, nil) = %+v, want prev unchanged", got)
+	}
+}
+
+func TestMergeSorted_bothEmpty(t *testing.T) {
+	got := MergeSorted(nil, nil)
+	if len(got) != 0 {
+		t.Errorf("MergeSorted(nil, nil) = %+v, want empty", got)
+	}
+}

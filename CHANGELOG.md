@@ -15,9 +15,11 @@ once a first tagged release is published.
 - A "Remove star" control to delete an individual star from the session without clearing all of them.
 - `internal/session`: save and load a session's named star positions as JSON ("Save stars..." / "Load stars..." buttons), so re-opening a series doesn't require re-marking every star by hand.
 - The star-naming dialog now shows the peak ADU under the cursor (a guide against saturation), and, when the FITS header provides them, the instrumental magnitude (from `MZERO`) and the `FILTER` used — matching FotoDif's star selection window. `photometry.MaxADU` computes the peak; `fits.Image` gains `MZero`/`HasMZero`/`Filter` fields.
+- Resumable processing, matching FotoDif's "primera serie" workflow: if photometry fails partway through a series (a bad frame, a field shift), the partial light curve up to that point is now shown immediately instead of discarding everything measured so far. A new "New session" checkbox (checked by default) controls whether the next load discards previous results or accumulates onto them — uncheck it, reload the remaining good files, and the new points merge with what was already measured, sorted by Julian Date. `timeseries.MergeSorted` implements the merge.
 
 ### Changed
 - `ui.Marker` renamed to `ui.Star` (adds a `Name` field); `ImageView.AddMarker`/`ClearMarkers` replaced by `SetStars([]Star)`, which redraws the full marker overlay from a single list — fixes a bug where re-tapping the same role left a visually orphaned marker no longer tracked by the app.
+- `measureSeries` no longer aborts an entire target's measurement on the first image that fails photometry — it now returns everything measured up to that point, plus which image stopped it and why.
 
 ## [0.1.0] - 2026-09-12
 

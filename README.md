@@ -52,8 +52,8 @@ Early development. The core measurement pipeline works end to end (load FITS →
 | Named/multiple stars (beyond fixed Target/Comparison/Check) | ✅ Done | High | Alpha |
 | Save/restore star positions ("Guardar/Recuperar posiciones") | ✅ Done | High | Alpha |
 | Save/restore processed session results ("Guardar datos") | ❌ Not started | High | Alpha |
-| Multi-session support ("primera serie" / resume after error) | ❌ Not started | High | Alpha |
-| Error tolerance control + resume-from-failure | ❌ Not started | High | Alpha |
+| Multi-session support ("primera serie" / resume after error) | ✅ Done | High | Alpha |
+| Error tolerance control (field-shift sensitivity, 1-9 slider) | ❌ Not started | High | Alpha |
 | Header metadata (MZERO/FILTER/max ADU) in star picker | ✅ Done | High | Alpha |
 | Configuration (optics, photometry radii, observatory) UI | ❌ Not started | Medium | Beta |
 | Airmass / transparency / FWHM / drift plots | ❌ Not started | Medium | Beta |

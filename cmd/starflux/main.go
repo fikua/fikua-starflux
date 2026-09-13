@@ -49,17 +49,28 @@ type appState struct {
 	series []*fits.Image // the loaded session; stars are placed on series[0] and applied to all
 	stars  []ui.Star     // open list of named stars, multiple per role
 
+	// accumulatedPoints holds previously computed light-curve points per
+	// target star name, carried across loads when "New session" is
+	// unchecked, so an interrupted series can be resumed instead of
+	// losing everything measured so far.
+	accumulatedPoints map[string][]timeseries.Point
+	newSessionCheck   *widget.Check
+
 	seriesLabel *widget.Label
 	starsSelect *widget.Select // populated with current star names, for removal
 }
 
 func newAppState(win fyne.Window) *appState {
+	newSessionCheck := widget.NewCheck("New session (discard previous results)", nil)
+	newSessionCheck.SetChecked(true)
+
 	return &appState{
-		win:         win,
-		view:        ui.NewImageView(),
-		levels:      ui.Levels{Background: 0, Range: 65535},
-		seriesLabel: widget.NewLabel("No images loaded"),
-		starsSelect: widget.NewSelect(nil, nil),
+		win:             win,
+		view:            ui.NewImageView(),
+		levels:          ui.Levels{Background: 0, Range: 65535},
+		seriesLabel:     widget.NewLabel("No images loaded"),
+		starsSelect:     widget.NewSelect(nil, nil),
+		newSessionCheck: newSessionCheck,
 	}
 }
 
@@ -128,6 +139,9 @@ func (s *appState) loadSeries(loaded []*fits.Image, loadErrs []fits.LoadError, e
 	}
 	s.series = loaded
 	s.clearStars()
+	if s.newSessionCheck.Checked {
+		s.accumulatedPoints = nil
+	}
 	if len(s.series) == 1 {
 		s.seriesLabel.SetText(fmt.Sprintf("Loaded 1 image: %s", filepath.Base(s.series[0].Path)))
 	} else {
@@ -180,6 +194,7 @@ func main() {
 	})
 
 	controls := container.NewVBox(
+		s.newSessionCheck,
 		widget.NewButton("Open FITS...", s.openFileAction),
 		widget.NewButton("Open Files...", s.openFilesAction),
 		widget.NewButton("Open Folder...", s.openFolderAction),
@@ -394,44 +409,83 @@ func (s *appState) processAction() {
 	}
 
 	for _, target := range targets {
-		obs, err := s.measureSeries(target, comps)
-		if err != nil {
-			dialog.ShowError(err, s.win)
+		result := s.measureSeries(target, comps)
+
+		newPoints, seriesErrs := timeseries.Series(result.obs)
+		allPoints := timeseries.MergeSorted(s.accumulatedPoints[target.Name], newPoints)
+
+		if len(allPoints) == 0 {
+			dialog.ShowError(fmt.Errorf("%s: no valid measurements across %d image(s): %v", target.Name, len(s.series), seriesErrs), s.win)
 			continue
 		}
 
-		points, errs := timeseries.Series(obs)
-		if len(points) == 0 {
-			dialog.ShowError(fmt.Errorf("%s: no valid measurements across %d image(s): %v", target.Name, len(s.series), errs), s.win)
-			continue
+		// Persist for a future "continue previous session" run, whether or
+		// not this run stopped early — today's clean run can be tomorrow's
+		// "previous session" if a bad frame shows up later.
+		if s.accumulatedPoints == nil {
+			s.accumulatedPoints = make(map[string][]timeseries.Point)
 		}
+		s.accumulatedPoints[target.Name] = allPoints
 
-		showLightCurve(s.win, points, target.Name)
+		showLightCurve(s.win, allPoints, target.Name)
+
+		if result.stopErr != nil {
+			dialog.ShowError(seriesStoppedError(result.stoppedAt, result.stopErr, len(allPoints)), s.win)
+		} else if len(seriesErrs) > 0 {
+			dialog.ShowInformation("Starflux", fmt.Sprintf("%s: %d epoch(s) skipped: %v", target.Name, len(seriesErrs), seriesErrs), s.win)
+		}
 	}
+}
+
+// seriesStoppedError formats the message shown when a series measurement
+// stops partway through, naming the file that failed and how to resume.
+func seriesStoppedError(stoppedAt string, cause error, pointsSoFar int) error {
+	return fmt.Errorf(
+		"stopped at %s: %v\n\n%d point(s) measured so far are shown above.\nFix or remove this image, then reload the remaining files with \"New session\" unchecked to continue this run.",
+		filepath.Base(stoppedAt), cause, pointsSoFar,
+	)
+}
+
+// measureSeriesResult is measureSeries's outcome: obs holds every image
+// successfully measured, in order; stoppedAt/stopErr describe the first
+// image that failed, if any. A full success has stopErr == nil.
+type measureSeriesResult struct {
+	obs       []timeseries.Observation
+	stoppedAt string // img.Path of the first image that failed to measure; "" if none did
+	stopErr   error
 }
 
 // measureSeries runs aperture photometry for one target star and combines
 // all comparison stars (by averaged flux, see photometry.CombineComparisons)
 // into a synthetic comparison measurement, for every image in the series.
-func (s *appState) measureSeries(target ui.Star, comps []ui.Star) ([]timeseries.Observation, error) {
+// It stops at the first image that fails to measure rather than aborting
+// the whole run, so everything measured up to that point is preserved and
+// can be shown to the user (and later resumed) instead of discarded.
+func (s *appState) measureSeries(target ui.Star, comps []ui.Star) measureSeriesResult {
 	obs := make([]timeseries.Observation, 0, len(s.series))
 	for _, img := range s.series {
 		targetRes, err := photometry.Measure(img, int(target.X), int(target.Y), centroidHalfWidth, defaultAperture)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %s: target: %w", img.Path, target.Name, err)
+			return measureSeriesResult{obs: obs, stoppedAt: img.Path, stopErr: fmt.Errorf("%s: target: %w", target.Name, err)}
 		}
 
 		compResults := make([]photometry.Result, 0, len(comps))
+		var compErr error
 		for _, c := range comps {
 			r, err := photometry.Measure(img, int(c.X), int(c.Y), centroidHalfWidth, defaultAperture)
 			if err != nil {
-				return nil, fmt.Errorf("%s: comparison %s: %w", img.Path, c.Name, err)
+				compErr = fmt.Errorf("comparison %s: %w", c.Name, err)
+				break
 			}
 			compResults = append(compResults, r)
 		}
+		if compErr != nil {
+			return measureSeriesResult{obs: obs, stoppedAt: img.Path, stopErr: compErr}
+		}
+
 		combinedComp, err := photometry.CombineComparisons(compResults)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", img.Path, err)
+			return measureSeriesResult{obs: obs, stoppedAt: img.Path, stopErr: err}
 		}
 
 		obs = append(obs, timeseries.Observation{
@@ -440,7 +494,7 @@ func (s *appState) measureSeries(target ui.Star, comps []ui.Star) ([]timeseries.
 			Comp:   combinedComp,
 		})
 	}
-	return obs, nil
+	return measureSeriesResult{obs: obs}
 }
 
 // showLightCurve renders a differential-magnitude light curve and displays

@@ -5,6 +5,7 @@ package timeseries
 import (
 	"fmt"
 	"math"
+	"sort"
 
 	"github.com/fikua/fikua-starflux/internal/photometry"
 )
@@ -82,6 +83,18 @@ func propagatedError(res photometry.Result, gain float64) float64 {
 	}
 	// d(mag)/d(flux) = -2.5/(ln(10)*flux); relative flux error is 1/snr.
 	return 2.5 / math.Ln10 / snr
+}
+
+// MergeSorted concatenates prev and next and returns the result sorted by
+// JD ascending, so a resumed series' new points combine correctly with
+// points already accumulated from an earlier, interrupted run regardless
+// of reload order.
+func MergeSorted(prev, next []Point) []Point {
+	merged := make([]Point, 0, len(prev)+len(next))
+	merged = append(merged, prev...)
+	merged = append(merged, next...)
+	sort.Slice(merged, func(i, j int) bool { return merged[i].JD < merged[j].JD })
+	return merged
 }
 
 // Series builds a full light curve from a set of observations, skipping
