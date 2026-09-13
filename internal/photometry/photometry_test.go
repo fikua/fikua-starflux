@@ -208,3 +208,110 @@ func TestCombineComparisons_emptyIsError(t *testing.T) {
 		t.Fatal("expected an error when combining zero results")
 	}
 }
+
+func TestDistance(t *testing.T) {
+	cases := []struct {
+		name                           string
+		prevX, prevY, newX, newY, want float64
+	}{
+		{"3-4-5 triangle", 0, 0, 3, 4, 5},
+		{"zero distance", 10, 10, 10, 10, 0},
+		{"horizontal only", 0, 0, 7, 0, 7},
+		{"vertical only", 0, 0, 0, 7, 7},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := Distance(c.prevX, c.prevY, c.newX, c.newY)
+			if math.Abs(got-c.want) > 1e-9 {
+				t.Errorf("Distance(%v,%v, %v,%v) = %v, want %v", c.prevX, c.prevY, c.newX, c.newY, got, c.want)
+			}
+		})
+	}
+}
+
+func TestDetectStars_findsIsolatedPeaks(t *testing.T) {
+	g := newGrid(61, 61, 0)
+	addGaussianStar(g, 10, 10, 1000, 2)
+	addGaussianStar(g, 30, 40, 1000, 2)
+	addGaussianStar(g, 50, 20, 1000, 2)
+
+	got := DetectStars(g, 100, 5)
+	if len(got) != 3 {
+		t.Fatalf("DetectStars found %d detections, want 3: %+v", len(got), got)
+	}
+	wantCenters := [][2]float64{{10, 10}, {30, 40}, {50, 20}}
+	for _, want := range wantCenters {
+		found := false
+		for _, d := range got {
+			if Distance(d.X, d.Y, want[0], want[1]) <= 1 {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("no detection within 1px of expected star at %v; got %+v", want, got)
+		}
+	}
+}
+
+func TestDetectStars_suppressesCloseDuplicates(t *testing.T) {
+	g := newGrid(41, 41, 0)
+	addGaussianStar(g, 20, 20, 1000, 2) // brighter
+	addGaussianStar(g, 22, 20, 400, 2)  // dimmer, close by
+
+	got := DetectStars(g, 100, 10)
+	if len(got) != 1 {
+		t.Fatalf("DetectStars found %d detections, want 1 (close duplicate suppressed): %+v", len(got), got)
+	}
+	if Distance(got[0].X, got[0].Y, 20, 20) > 1 {
+		t.Errorf("got detection at (%v, %v), want the brighter star near (20, 20)", got[0].X, got[0].Y)
+	}
+}
+
+func TestDetectStars_respectsMinCounts(t *testing.T) {
+	g := newGrid(41, 41, 0)
+	addGaussianStar(g, 20, 20, 50, 2) // faint peak
+
+	if got := DetectStars(g, 100, 5); len(got) != 0 {
+		t.Errorf("DetectStars with high minCounts found %d detections, want 0: %+v", len(got), got)
+	}
+	if got := DetectStars(g, 10, 5); len(got) != 1 {
+		t.Errorf("DetectStars with low minCounts found %d detections, want 1", len(got))
+	}
+}
+
+func TestDetectStars_emptyImageYieldsNoDetections(t *testing.T) {
+	g := newGrid(21, 21, 5) // flat background, no stars
+	// minCounts above the flat background level: no pixel qualifies as a
+	// candidate, regardless of the flat plateau's own local-max status.
+	if got := DetectStars(g, 100, 5); len(got) != 0 {
+		t.Errorf("DetectStars on a flat image found %d detections, want 0: %+v", len(got), got)
+	}
+}
+
+func TestWithinTolerance(t *testing.T) {
+	cases := []struct {
+		name         string
+		prevX, prevY float64
+		newX, newY   float64
+		maxPixels    float64
+		want         bool
+	}{
+		{"identical position", 10, 10, 10, 10, 2, true},
+		{"clearly inside", 10, 10, 11, 10.5, 2, true},
+		{"clearly outside", 10, 10, 20, 20, 2, false},
+		{"exact boundary", 10, 10, 12, 10, 2, true},
+		{"just past boundary", 10, 10, 12.01, 10, 2, false},
+		{"zero tolerance, exact match", 10, 10, 10, 10, 0, true},
+		{"zero tolerance, any drift fails", 10, 10, 10.01, 10, 0, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := WithinTolerance(c.prevX, c.prevY, c.newX, c.newY, c.maxPixels)
+			if got != c.want {
+				t.Errorf("WithinTolerance(%v,%v, %v,%v, max=%v) = %v, want %v",
+					c.prevX, c.prevY, c.newX, c.newY, c.maxPixels, got, c.want)
+			}
+		})
+	}
+}

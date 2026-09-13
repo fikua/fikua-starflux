@@ -256,3 +256,80 @@ func median(values []float64) float64 {
 	}
 	return (sorted[n/2-1] + sorted[n/2]) / 2
 }
+
+// Detection is one candidate star found by DetectStars: its pixel-precision
+// position and peak ADU value.
+type Detection struct {
+	X, Y float64
+	Peak float64
+}
+
+// DetectStars performs a simple bulk star-finder over the full image: it
+// scans for local-maxima pixels exceeding minCounts, then greedily keeps
+// the brightest detections first, suppressing any other candidate within
+// minSeparation pixels of an already-kept one (non-maximum suppression).
+//
+// This deliberately does not attempt to replicate FotoDif's undocumented
+// "RSR" (an unexplained signal-ratio threshold) — no specification of it
+// exists anywhere in the transcribed manual. minCounts is the one
+// threshold FotoDif's manual actually explains ("mínimo de cuentas"), and
+// is sufficient for a "good enough" bulk marking aid; the manual itself
+// frames this feature as needing experimental retuning regardless
+// ("tal vez necesiten determinarse experimentalmente").
+//
+// Detected positions are pixel-precision (the local-max pixel), not
+// centroid-refined — callers should re-run Centroid/Measure after
+// accepting a detection if sub-pixel precision matters.
+func DetectStars(img PixelSource, minCounts, minSeparation float64) []Detection {
+	w, h := img.Width(), img.Height()
+
+	var candidates []Detection
+	for y := 1; y < h-1; y++ {
+		for x := 1; x < w-1; x++ {
+			v := img.At(x, y)
+			if v < minCounts {
+				continue
+			}
+			if !isLocalMax3x3(img, x, y, v) {
+				continue
+			}
+			candidates = append(candidates, Detection{X: float64(x), Y: float64(y), Peak: v})
+		}
+	}
+
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].Peak > candidates[j].Peak })
+
+	var kept []Detection
+	for _, c := range candidates {
+		if !tooCloseToAny(c, kept, minSeparation) {
+			kept = append(kept, c)
+		}
+	}
+	return kept
+}
+
+// isLocalMax3x3 reports whether (x, y)'s value v is >= every one of its 8
+// immediate neighbors (a plateau of equal-value pixels is treated as a
+// local max at each pixel; suppression removes the resulting duplicates).
+func isLocalMax3x3(img PixelSource, x, y int, v float64) bool {
+	for dy := -1; dy <= 1; dy++ {
+		for dx := -1; dx <= 1; dx++ {
+			if dx == 0 && dy == 0 {
+				continue
+			}
+			if img.At(x+dx, y+dy) > v {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func tooCloseToAny(c Detection, kept []Detection, minSeparation float64) bool {
+	for _, k := range kept {
+		if Distance(c.X, c.Y, k.X, k.Y) < minSeparation {
+			return true
+		}
+	}
+	return false
+}
