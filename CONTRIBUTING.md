@@ -24,7 +24,7 @@ If you don't need the test fixtures (e.g. you're only reading code), skip downlo
 2. Keep commits focused and use clear, descriptive messages.
 3. Add or update tests for any behavior change.
 4. Ensure `go build ./...`, `go vet ./...`, `go test ./...`, and `gofmt -l .` are all clean before opening a pull request.
-5. Open a pull request describing the change and its motivation.
+5. Open a pull request describing the change and its motivation. **The pull request title must follow [Conventional Commits](https://www.conventionalcommits.org/)** (e.g. `feat: add tilt correction`, `fix: correct JD rounding`, `feat!: rename Star.Role values` for a breaking change) — PRs are squash-merged, so the title becomes the commit message on `main`, which [release-please](https://github.com/googleapis/release-please) reads to automatically version and release the project. PR titles are checked by CI and must pass before merging.
 
 ## Reporting issues
 
