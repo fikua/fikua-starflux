@@ -22,11 +22,11 @@ Grab the [latest release](https://github.com/fikua/fikua-starflux/releases/lates
 
 | Platform | Download |
 | --- | --- |
-| 🍎 Desktop app for macOS (Apple Silicon) | `starflux-darwin-arm64.dmg` |
-| 🍎 Desktop app for macOS (Intel) | `starflux-darwin-amd64.dmg` |
-| 🪟 Desktop app for Windows | `starflux-windows-amd64-setup.exe` |
-| 🐧 Desktop app for Linux (x86_64) | `starflux-linux-amd64.tar.gz` |
-| 🐧 Desktop app for Linux (ARM64) | `starflux-linux-arm64.tar.gz` |
+| macOS (Apple Silicon) | `starflux-darwin-arm64.dmg` |
+| macOS (Intel) | `starflux-darwin-amd64.dmg` |
+| Windows | `starflux-windows-amd64-setup.exe` |
+| Linux (x86_64) | `starflux-linux-amd64.tar.gz` |
+| Linux (ARM64) | `starflux-linux-arm64.tar.gz` |
 
 All [beta releases are available here](https://github.com/fikua/fikua-starflux/releases).
 
