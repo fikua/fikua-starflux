@@ -111,3 +111,139 @@ func Series(obs []Observation) (points []Point, errs []error) {
 	}
 	return points, errs
 }
+
+// FitBaseline fits a straight line (DiffMag = slope*JD + intercept) by
+// ordinary least squares, using only the points whose JD falls within any
+// of the given [start, end] ranges — the "flat" baseline zone(s) the user
+// has identified (e.g. out-of-transit data, or two ranges for in/out of
+// transit), matching FotoDif's tilt-correction workflow of marking 2 or 4
+// reference points. Returns an error if fewer than 2 points fall within
+// any range, or if all of them share the same JD (a degenerate fit).
+func FitBaseline(points []Point, ranges [][2]float64) (slope, intercept float64, err error) {
+	var n int
+	var sumX, sumY, sumXX, sumXY float64
+	for _, p := range points {
+		if !inAnyRange(p.JD, ranges) {
+			continue
+		}
+		n++
+		sumX += p.JD
+		sumY += p.DiffMag
+		sumXX += p.JD * p.JD
+		sumXY += p.JD * p.DiffMag
+	}
+	if n < 2 {
+		return 0, 0, fmt.Errorf("timeseries: FitBaseline: need at least 2 points within the given range(s), found %d", n)
+	}
+	nf := float64(n)
+	denom := nf*sumXX - sumX*sumX
+	if denom == 0 {
+		return 0, 0, fmt.Errorf("timeseries: FitBaseline: degenerate fit (all points share the same JD)")
+	}
+	slope = (nf*sumXY - sumX*sumY) / denom
+	intercept = (sumY - slope*sumX) / nf
+	return slope, intercept, nil
+}
+
+func inAnyRange(jd float64, ranges [][2]float64) bool {
+	for _, r := range ranges {
+		lo, hi := r[0], r[1]
+		if lo > hi {
+			lo, hi = hi, lo
+		}
+		if jd >= lo && jd <= hi {
+			return true
+		}
+	}
+	return false
+}
+
+// SubtractTilt returns a new slice of points with DiffMag adjusted by
+// subtracting the fitted baseline line (slope*JD + intercept) from every
+// point, leaving the input slice unmodified. This is a presentational
+// correction only, matching FotoDif's documented behavior ("una
+// interpretación de las medidas, no un cambio real") — callers must not
+// persist the result over the original accumulated points.
+func SubtractTilt(points []Point, slope, intercept float64) []Point {
+	out := make([]Point, len(points))
+	for i, p := range points {
+		out[i] = p
+		out[i].DiffMag -= slope*p.JD + intercept
+	}
+	return out
+}
+
+// Dispersion returns the sample standard deviation of DiffMag across
+// points — a simple measure of how much a light curve "wobbles" overall.
+// Returns 0 for fewer than 2 points (no meaningful spread to compute).
+func Dispersion(points []Point) float64 {
+	if len(points) < 2 {
+		return 0
+	}
+	var sum float64
+	for _, p := range points {
+		sum += p.DiffMag
+	}
+	mean := sum / float64(len(points))
+
+	var sumSq float64
+	for _, p := range points {
+		d := p.DiffMag - mean
+		sumSq += d * d
+	}
+	return math.Sqrt(sumSq / float64(len(points)-1)) // sample variance (n-1), unbiased estimator
+}
+
+// MedianErr returns the median of DiffMagErr across points, used as a
+// stand-in for a star's "typical expected noise" when flagging variability
+// candidates. Returns 0 for an empty slice.
+func MedianErr(points []Point) float64 {
+	if len(points) == 0 {
+		return 0
+	}
+	errs := make([]float64, len(points))
+	for i, p := range points {
+		errs[i] = p.DiffMagErr
+	}
+	sort.Float64s(errs)
+	n := len(errs)
+	if n%2 == 1 {
+		return errs[n/2]
+	}
+	return (errs[n/2-1] + errs[n/2]) / 2
+}
+
+// VariabilityRatio returns Dispersion(points) / MedianErr(points): how many
+// "typical measurement errors wide" the light curve's actual scatter is. A
+// perfectly constant star measured with realistic noise should have a
+// ratio near 1 (the scatter IS the noise); a ratio well above 1 means the
+// star is varying by more than measurement noise alone can explain.
+// Returns 0 if MedianErr is 0 (no usable error estimate — e.g. gain wasn't
+// configured) rather than dividing by zero, so callers should treat a
+// returned 0 as "unknown", not "definitely not variable".
+func VariabilityRatio(points []Point) float64 {
+	medErr := MedianErr(points)
+	if medErr <= 0 {
+		return 0
+	}
+	return Dispersion(points) / medErr
+}
+
+// IsPossibleVariable reports whether a star's light curve scatter exceeds
+// threshold times its own typical measurement error — a deliberately
+// generous, high-recall filter (matching FotoDif's documented design goal:
+// "bastante generoso... es posible que genere algunas detecciones falsas"),
+// not a rigorous statistical test. threshold values around 3 are a
+// reasonable starting point (see VariableThresholdDefault).
+func IsPossibleVariable(points []Point, threshold float64) bool {
+	return VariabilityRatio(points) > threshold
+}
+
+// VariableThresholdDefault is the suggested default multiplier for
+// IsPossibleVariable: a light curve whose scatter is more than 3x its own
+// median measurement error is flagged. This is intentionally loose (a
+// truly constant star's scatter should sit close to 1x its error under
+// pure Gaussian noise) so as not to miss real but marginal variables,
+// mirroring FotoDif's stated preference for false positives over missed
+// detections.
+const VariableThresholdDefault = 3.0

@@ -117,7 +117,7 @@ func LoadDir(dir string) (images []*Image, errs []LoadError, err error) {
 		if e.IsDir() {
 			continue
 		}
-		if isFITSExt(e.Name()) {
+		if IsFITSExt(e.Name()) {
 			paths = append(paths, filepath.Join(dir, e.Name()))
 		}
 	}
@@ -159,7 +159,9 @@ func LoadFiles(paths []string) (images []*Image, errs []LoadError, err error) {
 	return images, errs, nil
 }
 
-func isFITSExt(name string) bool {
+// IsFITSExt reports whether name has a recognized FITS file extension
+// (.fits, .fit, .fts, case-insensitive).
+func IsFITSExt(name string) bool {
 	switch strings.ToLower(filepath.Ext(name)) {
 	case ".fits", ".fit", ".fts":
 		return true

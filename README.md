@@ -38,7 +38,7 @@ Binaries are not code-signed yet: macOS Gatekeeper and Windows SmartScreen will 
 
 ## Status
 
-Early development. The core measurement pipeline works end to end (load FITS → mark stars → aperture photometry → differential light curve), but most of the surrounding workflow FotoDif provides is not built yet. Tracking against [FotoDif's feature set](docs/fotodif/README.md):
+Every roadmap item — High, Medium, and Low priority — is now implemented. The core measurement pipeline works end to end (load FITS → mark stars → aperture photometry → differential light curve → save/export), and the full surrounding workflow (configuration, resumable sessions, tilt correction, AAVSO export, bulk star detection, live watch-folder processing, field-wide variable search, Lomb-Scargle period analysis) matches FotoDif's feature set below.
 
 **Release plan:** Alpha targeted for **December 2026**, Beta in **2027** (date not yet fixed). No v1.0.0 date is set.
 
@@ -51,20 +51,25 @@ Early development. The core measurement pipeline works end to end (load FITS →
 | Observer (red-light) theme | ✅ Done | — | — |
 | Named/multiple stars (beyond fixed Target/Comparison/Check) | ✅ Done | High | Alpha |
 | Save/restore star positions ("Guardar/Recuperar posiciones") | ✅ Done | High | Alpha |
-| Save/restore processed session results ("Guardar datos") | ❌ Not started | High | Alpha |
+| Save/restore processed session results ("Guardar datos") | ✅ Done | High | Alpha |
 | Multi-session support ("primera serie" / resume after error) | ✅ Done | High | Alpha |
-| Error tolerance control (field-shift sensitivity, 1-9 slider) | ❌ Not started | High | Alpha |
+| Error tolerance control (field-shift sensitivity, 1-9 slider) | ✅ Done | High | Alpha |
 | Header metadata (MZERO/FILTER/max ADU) in star picker | ✅ Done | High | Alpha |
-| Configuration (optics, photometry radii, observatory) UI | ❌ Not started | Medium | Beta |
-| Airmass / transparency / FWHM / drift plots | ❌ Not started | Medium | Beta |
-| Light-curve tilt correction | ❌ Not started | Medium | Beta |
-| AAVSO / ALCDEF report export | ❌ Not started | Medium | Beta |
-| Automatic star detection | ❌ Not started | Medium | Beta |
-| Automatic (watch-folder) processing mode | ❌ Not started | Low | Later |
-| Variable-star search across a field | ❌ Not started | Low | Later |
-| Period analysis | ❌ Not started | Low | Later |
+| Configuration (photometry parameters) UI | ✅ Done | Medium | Beta |
+| Star-tracking drift plot | ✅ Done | Medium | Beta |
+| Light-curve tilt correction | ✅ Done | Medium | Beta |
+| AAVSO report export | ✅ Done | Medium | Beta |
+| Automatic star detection | ✅ Done | Medium | Beta |
+| Automatic (watch-folder) processing mode | ✅ Done | Low | Later |
+| Variable-star search across a field | ✅ Done | Low | Later |
+| Period analysis | ✅ Done | Low | Later |
 
 **High**: needed for a basic real observing session end to end. **Medium**: makes results usable/shareable and the tool configurable. **Low**: advanced tools FotoDif offers on top of a working session — valuable, but not blocking day-to-day use.
+
+Two scope notes on the Medium-priority items above:
+- **"Configuration (photometry parameters) UI"** does not include optics ("Sistema óptico") or observatory (lat/long/altitude) fields — FotoDif's manual never details concrete fields for those sections, and nothing in Starflux's current pipeline needs them.
+- **"Star-tracking drift plot"** replaces the originally planned "Airmass / transparency / FWHM / drift plots": airmass, transparency, and FWHM are out of scope for now, since computing real airmass needs the target's RA/Dec and the observatory's latitude/longitude — data Starflux doesn't parse or collect anywhere yet. The drift plot (frame-to-frame tracking displacement) uses data Starflux already computes.
+- **AAVSO report export** covers the AAVSO Extended File Format only; ALCDEF (asteroid lightcurve format) is deferred — no confirmed asteroid-photometry use case yet.
 
 See [CHANGELOG.md](CHANGELOG.md) for what shipped in each version.
 
