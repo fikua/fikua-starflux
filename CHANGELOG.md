@@ -8,6 +8,10 @@ once a first tagged release is published.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-13
+
+All roadmap items — High, Medium, and Low priority — are now implemented, completing the originally planned Alpha and Beta feature set in a single release, plus automated SemVer release tooling.
+
 ### Added
 - Named, multi-star sessions: click a star to name it and assign it a role (Target/Comparison/Check) via a dialog, matching FotoDif's workflow — replaces the old single-star-per-role model.
 - `photometry.CombineComparisons`: combines multiple comparison stars into one synthetic measurement by averaging flux (not magnitude), the statistically correct way to reduce noise across several comparison stars.
