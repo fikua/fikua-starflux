@@ -7,7 +7,17 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/widget"
+	"golang.org/x/image/draw"
+)
+
+// loupeBoxPx is the half-width, in source image pixels, of the region
+// captured around the cursor for the magnifier. loupeDisplaySize is the
+// on-screen size of the magnifier widget.
+const (
+	loupeBoxPx       = 20
+	loupeDisplaySize = 160
 )
 
 // StarRole distinguishes the three star roles FotoDif uses per session.
@@ -47,6 +57,7 @@ type ImageView struct {
 
 	img     *canvas.Image
 	overlay *fyne.Container
+	loupe   *canvas.Image // magnifier preview, follows the cursor
 
 	imgW, imgH int // native pixel dimensions of the loaded image
 
@@ -61,9 +72,15 @@ func NewImageView() *ImageView {
 	v := &ImageView{
 		img:     canvas.NewImageFromImage(nil),
 		overlay: container.NewWithoutLayout(),
+		loupe:   canvas.NewImageFromImage(nil),
 	}
 	v.img.FillMode = canvas.ImageFillContain
 	v.img.ScaleMode = canvas.ImageScalePixels
+	v.loupe.FillMode = canvas.ImageFillContain
+	v.loupe.ScaleMode = canvas.ImageScalePixels
+	v.loupe.Hidden = true
+	v.loupe.SetMinSize(fyne.NewSize(loupeDisplaySize, loupeDisplaySize))
+	v.loupe.Resize(fyne.NewSize(loupeDisplaySize, loupeDisplaySize))
 	v.ExtendBaseWidget(v)
 	return v
 }
@@ -128,8 +145,107 @@ func (v *ImageView) Tapped(ev *fyne.PointEvent) {
 }
 
 func (v *ImageView) CreateRenderer() fyne.WidgetRenderer {
-	stack := container.NewStack(v.img, v.overlay)
+	stack := container.NewStack(v.img, v.overlay, container.NewWithoutLayout(v.loupe))
 	return widget.NewSimpleRenderer(stack)
+}
+
+// MouseIn implements desktop.Hoverable.
+func (v *ImageView) MouseIn(ev *desktop.MouseEvent) {
+	v.updateLoupe(ev.Position)
+}
+
+// MouseMoved implements desktop.Hoverable, updating the magnifier preview
+// to show a zoomed-in view of the pixels under the cursor.
+func (v *ImageView) MouseMoved(ev *desktop.MouseEvent) {
+	v.updateLoupe(ev.Position)
+}
+
+// MouseOut implements desktop.Hoverable.
+func (v *ImageView) MouseOut() {
+	v.loupe.Hidden = true
+	v.loupe.Refresh()
+}
+
+// updateLoupe crops a small region of the source image around the cursor
+// and displays it magnified, positioned so it doesn't sit under the cursor.
+func (v *ImageView) updateLoupe(pos fyne.Position) {
+	if v.img.Image == nil || v.imgW == 0 || v.imgH == 0 {
+		return
+	}
+	size := v.Size()
+	if size.Width <= 0 || size.Height <= 0 {
+		return
+	}
+	scale := imageDisplayScale(size, v.imgW, v.imgH)
+	offsetX, offsetY := imageDisplayOffset(size, v.imgW, v.imgH, scale)
+
+	px := int((pos.X - offsetX) / scale)
+	py := int((pos.Y - offsetY) / scale)
+	if px < 0 || py < 0 || px >= v.imgW || py >= v.imgH {
+		v.loupe.Hidden = true
+		v.loupe.Refresh()
+		return
+	}
+
+	crop, ok := cropImage(v.img.Image, px-loupeBoxPx, py-loupeBoxPx, px+loupeBoxPx, py+loupeBoxPx)
+	if !ok {
+		return
+	}
+	v.loupe.Image = magnify(crop, loupeDisplaySize)
+	v.loupe.Hidden = false
+
+	// Place the loupe near the cursor but offset so the cursor and the
+	// star under it stay visible instead of being covered.
+	const margin = 24
+	lx, ly := pos.X+margin, pos.Y+margin
+	if lx+loupeDisplaySize > size.Width {
+		lx = pos.X - margin - loupeDisplaySize
+	}
+	if ly+loupeDisplaySize > size.Height {
+		ly = pos.Y - margin - loupeDisplaySize
+	}
+	v.loupe.Move(fyne.NewPos(lx, ly))
+	v.loupe.Refresh()
+}
+
+// magnify scales src up to size x size using nearest-neighbor sampling, so
+// individual source pixels stay visible as blocks (useful for pinpointing a
+// star's exact pixel) rather than being smoothed away. A crosshair is drawn
+// at the center to mark the exact pixel a click would land on.
+func magnify(src image.Image, size int) image.Image {
+	dst := image.NewRGBA(image.Rect(0, 0, size, size))
+	draw.NearestNeighbor.Scale(dst, dst.Bounds(), src, src.Bounds(), draw.Over, nil)
+
+	crosshair := color.NRGBA{R: 0xff, G: 0x40, B: 0x40, A: 0xc0}
+	cx, cy := size/2, size/2
+	const gap, arm = 4, 10
+	for i := -arm; i <= arm; i++ {
+		if i < -gap || i > gap {
+			dst.Set(cx+i, cy, crosshair)
+			dst.Set(cx, cy+i, crosshair)
+		}
+	}
+	return dst
+}
+
+// cropImage returns the sub-image of src within [x0,y0]-[x1,y1], clamped to
+// src's bounds. Returns ok=false if src doesn't support sub-imaging or the
+// clamped region is empty.
+func cropImage(src image.Image, x0, y0, x1, y1 int) (image.Image, bool) {
+	type subImager interface {
+		SubImage(r image.Rectangle) image.Image
+	}
+	si, ok := src.(subImager)
+	if !ok {
+		return nil, false
+	}
+
+	b := src.Bounds()
+	rect := image.Rect(x0, y0, x1, y1).Intersect(b)
+	if rect.Empty() {
+		return nil, false
+	}
+	return si.SubImage(rect), true
 }
 
 func (v *ImageView) layoutMarkers() {

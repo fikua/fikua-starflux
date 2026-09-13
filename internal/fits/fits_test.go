@@ -173,9 +173,12 @@ func TestLoadDir(t *testing.T) {
 		t.Fatalf("write readme.txt: %v", err)
 	}
 
-	images, err := LoadDir(dir)
+	images, errs, err := LoadDir(dir)
 	if err != nil {
 		t.Fatalf("LoadDir: %v", err)
+	}
+	if len(errs) != 0 {
+		t.Fatalf("got errs %v, want none", errs)
 	}
 
 	if len(images) != 3 {
@@ -184,6 +187,32 @@ func TestLoadDir(t *testing.T) {
 	if images[0].Pixels[0] != 1 || images[1].Pixels[0] != 3 || images[2].Pixels[0] != 5 {
 		t.Errorf("images not in sorted filename order: got first pixels %v, %v, %v",
 			images[0].Pixels[0], images[1].Pixels[0], images[2].Pixels[0])
+	}
+}
+
+func TestLoadDir_partialFailureStillLoadsGoodFiles(t *testing.T) {
+	dir := t.TempDir()
+
+	writeTestFITS(t, filepath.Join(dir, "img_000.fits"), 16, []int{2, 1}, []int16{1, 2}, 0, 0)
+	// A corrupt "FITS" file that will fail to parse.
+	if err := os.WriteFile(filepath.Join(dir, "img_001.fits"), []byte("not a real fits file"), 0o644); err != nil {
+		t.Fatalf("write corrupt file: %v", err)
+	}
+	writeTestFITS(t, filepath.Join(dir, "img_002.fits"), 16, []int{2, 1}, []int16{5, 6}, 0, 0)
+
+	images, errs, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir: %v", err)
+	}
+
+	if len(images) != 2 {
+		t.Fatalf("got %d images, want 2 (the good files should still load)", len(images))
+	}
+	if len(errs) != 1 {
+		t.Fatalf("got %d errors, want 1", len(errs))
+	}
+	if filepath.Base(errs[0].Path) != "img_001.fits" {
+		t.Errorf("got error for %q, want img_001.fits", errs[0].Path)
 	}
 }
 
@@ -198,9 +227,12 @@ func TestLoadFiles_sortsByFilenameRegardlessOfInputOrder(t *testing.T) {
 
 	// Deliberately out of order, simulating a multi-select file picker
 	// that returns paths in selection order rather than sorted order.
-	images, err := LoadFiles([]string{pathC, pathA, pathB})
+	images, errs, err := LoadFiles([]string{pathC, pathA, pathB})
 	if err != nil {
 		t.Fatalf("LoadFiles: %v", err)
+	}
+	if len(errs) != 0 {
+		t.Fatalf("got errs %v, want none", errs)
 	}
 
 	if len(images) != 3 {
@@ -213,20 +245,39 @@ func TestLoadFiles_sortsByFilenameRegardlessOfInputOrder(t *testing.T) {
 }
 
 func TestLoadFiles_empty(t *testing.T) {
-	if _, err := LoadFiles(nil); err == nil {
+	if _, _, err := LoadFiles(nil); err == nil {
 		t.Fatal("expected an error for an empty file list")
+	}
+}
+
+func TestLoadFiles_allFail(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bad.fits")
+	if err := os.WriteFile(path, []byte("not a real fits file"), 0o644); err != nil {
+		t.Fatalf("write corrupt file: %v", err)
+	}
+
+	images, errs, err := LoadFiles([]string{path})
+	if err == nil {
+		t.Fatal("expected an error when every file fails to load")
+	}
+	if len(images) != 0 {
+		t.Errorf("got %d images, want 0", len(images))
+	}
+	if len(errs) != 1 {
+		t.Fatalf("got %d errors, want 1", len(errs))
 	}
 }
 
 func TestLoadDir_empty(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := LoadDir(dir); err == nil {
+	if _, _, err := LoadDir(dir); err == nil {
 		t.Fatal("expected an error for a directory with no FITS files")
 	}
 }
 
 func TestLoadDir_missingDir(t *testing.T) {
-	if _, err := LoadDir(filepath.Join(t.TempDir(), "does-not-exist")); err == nil {
+	if _, _, err := LoadDir(filepath.Join(t.TempDir(), "does-not-exist")); err == nil {
 		t.Fatal("expected an error for a missing directory")
 	}
 }

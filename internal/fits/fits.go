@@ -80,13 +80,28 @@ func Load(path string) (*Image, error) {
 	}, nil
 }
 
+// LoadError records a single file's failure within a batch load, so callers
+// can report which files failed and why without losing the images that
+// loaded successfully.
+type LoadError struct {
+	Path string
+	Err  error
+}
+
+func (e LoadError) Error() string {
+	return fmt.Sprintf("%s: %v", e.Path, e.Err)
+}
+
 // LoadDir loads every FITS file (.fits, .fit, .fts, case-insensitive) found
 // directly inside dir, sorted by filename, which for a normally-named
-// observing session corresponds to acquisition order.
-func LoadDir(dir string) ([]*Image, error) {
+// observing session corresponds to acquisition order. Individual files that
+// fail to load are reported in the returned errs rather than aborting the
+// whole batch; err is non-nil only for a directory-level failure (unreadable
+// directory, or no FITS files found at all).
+func LoadDir(dir string) (images []*Image, errs []LoadError, err error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, fmt.Errorf("fits: read dir %s: %w", dir, err)
+		return nil, nil, fmt.Errorf("fits: read dir %s: %w", dir, err)
 	}
 
 	var paths []string
@@ -100,7 +115,7 @@ func LoadDir(dir string) ([]*Image, error) {
 	}
 
 	if len(paths) == 0 {
-		return nil, fmt.Errorf("fits: %s: no FITS files found", dir)
+		return nil, nil, fmt.Errorf("fits: %s: no FITS files found", dir)
 	}
 
 	return LoadFiles(paths)
@@ -108,10 +123,11 @@ func LoadDir(dir string) ([]*Image, error) {
 
 // LoadFiles loads each of the given FITS file paths, sorted by filename
 // (which for a normally-named observing session corresponds to acquisition
-// order).
-func LoadFiles(paths []string) ([]*Image, error) {
+// order). Files that fail to load are skipped and reported in errs; err is
+// non-nil only if no files were given, or every file failed to load.
+func LoadFiles(paths []string) (images []*Image, errs []LoadError, err error) {
 	if len(paths) == 0 {
-		return nil, fmt.Errorf("fits: no files given")
+		return nil, nil, fmt.Errorf("fits: no files given")
 	}
 
 	sorted := append([]string(nil), paths...)
@@ -119,15 +135,20 @@ func LoadFiles(paths []string) ([]*Image, error) {
 		return filepath.Base(sorted[i]) < filepath.Base(sorted[j])
 	})
 
-	images := make([]*Image, 0, len(sorted))
+	images = make([]*Image, 0, len(sorted))
 	for _, path := range sorted {
-		img, err := Load(path)
-		if err != nil {
-			return nil, err
+		img, loadErr := Load(path)
+		if loadErr != nil {
+			errs = append(errs, LoadError{Path: path, Err: loadErr})
+			continue
 		}
 		images = append(images, img)
 	}
-	return images, nil
+
+	if len(images) == 0 {
+		return nil, errs, fmt.Errorf("fits: all %d file(s) failed to load", len(sorted))
+	}
+	return images, errs, nil
 }
 
 func isFITSExt(name string) bool {
