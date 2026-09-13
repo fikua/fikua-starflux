@@ -1,0 +1,22 @@
+# CODEOWNERS — required reviewers for pull requests.
+#
+# Order matters: later, more specific patterns override earlier ones.
+# See https://docs.github.com/articles/about-codeowners
+
+# Default owner for everything in the repo.
+* @oriolcanades
+
+# CI/CD and release pipeline — build, release, and security-analysis
+# workflows, plus the tool versions they pin. Changes here can affect what
+# gets built, signed, published, or reported as passing, so they always
+# need explicit review.
+/.github/                    @oriolcanades
+/tools/                      @oriolcanades
+/sonar-project.properties    @oriolcanades
+/packaging/                  @oriolcanades
+
+# This file itself: changes to reviewer requirements always need review.
+/.github/CODEOWNERS @oriolcanades
+
+# Licensing and legal.
+/LICENSE @oriolcanades
