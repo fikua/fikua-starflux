@@ -40,26 +40,28 @@ Binaries are not code-signed yet: macOS Gatekeeper and Windows SmartScreen will 
 
 Early development. The core measurement pipeline works end to end (load FITS → mark stars → aperture photometry → differential light curve), but most of the surrounding workflow FotoDif provides is not built yet. Tracking against [FotoDif's feature set](docs/fotodif/README.md):
 
-| Feature | Status | Priority |
-| --- | --- | --- |
-| Load FITS (single file / multiple files / folder) | ✅ Done | — |
-| Aperture photometry (centroid, aperture, sky annulus) | ✅ Done | — |
-| Differential magnitude light curve | ✅ Done | — |
-| Star-picking magnifier loupe | ✅ Done | — |
-| Observer (red-light) theme | ✅ Done | — |
-| Named/multiple stars (beyond fixed Target/Comparison/Check) | ❌ Not started | High |
-| Save/restore session state and star positions | ❌ Not started | High |
-| Multi-session support ("primera serie" / resume after error) | ❌ Not started | High |
-| Error tolerance control + resume-from-failure | ❌ Not started | High |
-| Header metadata (MZERO/FILTER/max ADU) in star picker | ❌ Not started | High |
-| Configuration (optics, photometry radii, observatory) UI | ❌ Not started | Medium |
-| Airmass / transparency / FWHM / drift plots | ❌ Not started | Medium |
-| Light-curve tilt correction | ❌ Not started | Medium |
-| AAVSO / ALCDEF report export | ❌ Not started | Medium |
-| Automatic star detection | ❌ Not started | Medium |
-| Automatic (watch-folder) processing mode | ❌ Not started | Low |
-| Variable-star search across a field | ❌ Not started | Low |
-| Period analysis | ❌ Not started | Low |
+**Release plan:** Alpha targeted for **December 2026**, Beta in **2027** (date not yet fixed). No v1.0.0 date is set.
+
+| Feature | Status | Priority | Target |
+| --- | --- | --- | --- |
+| Load FITS (single file / multiple files / folder) | ✅ Done | — | — |
+| Aperture photometry (centroid, aperture, sky annulus) | ✅ Done | — | — |
+| Differential magnitude light curve | ✅ Done | — | — |
+| Star-picking magnifier loupe | ✅ Done | — | — |
+| Observer (red-light) theme | ✅ Done | — | — |
+| Named/multiple stars (beyond fixed Target/Comparison/Check) | ❌ Not started | High | Alpha |
+| Save/restore session state and star positions | ❌ Not started | High | Alpha |
+| Multi-session support ("primera serie" / resume after error) | ❌ Not started | High | Alpha |
+| Error tolerance control + resume-from-failure | ❌ Not started | High | Alpha |
+| Header metadata (MZERO/FILTER/max ADU) in star picker | ❌ Not started | High | Alpha |
+| Configuration (optics, photometry radii, observatory) UI | ❌ Not started | Medium | Beta |
+| Airmass / transparency / FWHM / drift plots | ❌ Not started | Medium | Beta |
+| Light-curve tilt correction | ❌ Not started | Medium | Beta |
+| AAVSO / ALCDEF report export | ❌ Not started | Medium | Beta |
+| Automatic star detection | ❌ Not started | Medium | Beta |
+| Automatic (watch-folder) processing mode | ❌ Not started | Low | Later |
+| Variable-star search across a field | ❌ Not started | Low | Later |
+| Period analysis | ❌ Not started | Low | Later |
 
 **High**: needed for a basic real observing session end to end. **Medium**: makes results usable/shareable and the tool configurable. **Low**: advanced tools FotoDif offers on top of a working session — valuable, but not blocking day-to-day use.
 
