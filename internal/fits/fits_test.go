@@ -1,6 +1,7 @@
 package fits
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -118,6 +119,88 @@ func TestLoad_bitpix16(t *testing.T) {
 	}
 }
 
+func TestLoad_bitpix8(t *testing.T) {
+	// bitpix=8 (unsigned byte) — used by some old/low-dynamic-range FITS.
+	path := filepath.Join(t.TempDir(), "test8.fits")
+	data := []byte{0, 1, 127, 255}
+	writeTestFITS(t, path, 8, []int{4, 1}, data, 0, 0)
+
+	img, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	want := []float64{0, 1, 127, 255}
+	for i, v := range want {
+		if img.Pixels[i] != v {
+			t.Errorf("Pixels[%d] = %v, want %v", i, img.Pixels[i], v)
+		}
+	}
+}
+
+func TestLoad_bitpix32(t *testing.T) {
+	// bitpix=32 (32-bit signed integer) — used by some high-dynamic-range
+	// sensors and stacked/summed images that overflow 16 bits.
+	path := filepath.Join(t.TempDir(), "test32.fits")
+	data := []int32{0, 70000, -70000, 2147483647}
+	writeTestFITS(t, path, 32, []int{4, 1}, data, 0, 0)
+
+	img, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	want := []float64{0, 70000, -70000, 2147483647}
+	for i, v := range want {
+		if img.Pixels[i] != v {
+			t.Errorf("Pixels[%d] = %v, want %v", i, img.Pixels[i], v)
+		}
+	}
+}
+
+func TestLoad_bitpix64(t *testing.T) {
+	// bitpix=64 (64-bit signed integer) — rare, but part of the FITS
+	// standard's integer types.
+	path := filepath.Join(t.TempDir(), "test64.fits")
+	data := []int64{0, 1, -1, 9007199254740993} // beyond float64's exact-integer range
+	writeTestFITS(t, path, 64, []int{4, 1}, data, 0, 0)
+
+	img, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// 9007199254740993 (2^53 + 1) isn't exactly representable as float64;
+	// confirm the conversion rounds to the nearest representable value
+	// rather than silently corrupting in some other way.
+	want := []float64{0, 1, -1, 9007199254740992}
+	for i, v := range want {
+		if img.Pixels[i] != v {
+			t.Errorf("Pixels[%d] = %v, want %v", i, img.Pixels[i], v)
+		}
+	}
+}
+
+func TestLoad_bitpixNeg32(t *testing.T) {
+	// bitpix=-32 (32-bit IEEE float) — common for calibrated/processed
+	// images where BSCALE/BZERO integer scaling isn't used.
+	path := filepath.Join(t.TempDir(), "test_neg32.fits")
+	data := []float32{0, 1.5, -3.25, 12345.75}
+	writeTestFITS(t, path, -32, []int{4, 1}, data, 0, 0)
+
+	img, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	want := []float64{0, 1.5, -3.25, 12345.75}
+	for i, v := range want {
+		if img.Pixels[i] != v {
+			t.Errorf("Pixels[%d] = %v, want %v", i, img.Pixels[i], v)
+		}
+	}
+}
+
 func TestLoad_bscaleBzero(t *testing.T) {
 	// Unsigned 16-bit sensor data is commonly stored as bitpix=16 with
 	// BZERO=32768 to represent the 0-65535 range; Load must apply the
@@ -136,6 +219,80 @@ func TestLoad_bscaleBzero(t *testing.T) {
 		if img.Pixels[i] != v {
 			t.Errorf("Pixels[%d] = %v, want %v", i, img.Pixels[i], v)
 		}
+	}
+}
+
+func TestHeaderFloat_numericTypeVariants(t *testing.T) {
+	// FITS header card values can arrive as different concrete numeric
+	// Go types depending on how they were originally written; headerFloat
+	// must normalize all of them to float64, and headerString must
+	// stringify a non-string value via its %v fallback.
+	path := filepath.Join(t.TempDir(), "test_types.fits")
+
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	defer f.Close()
+	file, err := fitsio.Create(f)
+	if err != nil {
+		t.Fatalf("fitsio.Create: %v", err)
+	}
+	defer file.Close()
+
+	img := fitsio.NewImage(16, []int{1, 1})
+	defer img.Close()
+	if err := img.Header().Append(
+		fitsio.Card{Name: "MININT", Value: int(7), Comment: "int-typed value"},
+		fitsio.Card{Name: "MINI64", Value: int64(9), Comment: "int64-typed value"},
+		fitsio.Card{Name: "MINF32", Value: float32(2.5), Comment: "float32-typed value"},
+		fitsio.Card{Name: "INSTRUME", Value: "TestCam", Comment: "string-typed value"},
+	); err != nil {
+		t.Fatalf("append cards: %v", err)
+	}
+	if err := img.Write([]int16{10}); err != nil {
+		t.Fatalf("write image data: %v", err)
+	}
+	if err := file.Write(img); err != nil {
+		t.Fatalf("write image to file: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close file: %v", err)
+	}
+	f.Close()
+
+	readF, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer readF.Close()
+	readFile, err := fitsio.Open(readF)
+	if err != nil {
+		t.Fatalf("fitsio.Open: %v", err)
+	}
+	defer readFile.Close()
+	header := readFile.HDU(0).Header()
+
+	if got := headerFloat(header, "MININT"); got != 7 {
+		t.Errorf("headerFloat(int) = %v, want 7", got)
+	}
+	if got := headerFloat(header, "MINI64"); got != 9 {
+		t.Errorf("headerFloat(int64) = %v, want 9", got)
+	}
+	if got := headerFloat(header, "MINF32"); got != 2.5 {
+		t.Errorf("headerFloat(float32) = %v, want 2.5", got)
+	}
+	if got := headerFloat(header, "MISSING"); got != 0 {
+		t.Errorf("headerFloat(missing key) = %v, want 0", got)
+	}
+	if got := headerString(header, "MININT"); got != "7" {
+		t.Errorf("headerString(non-string value) = %q, want %q", got, "7")
+	}
+	if got := headerString(header, "MISSING"); got != "" {
+		t.Errorf("headerString(missing key) = %q, want empty", got)
+	}
+	if got := headerFloat(header, "INSTRUME"); got != 0 {
+		t.Errorf("headerFloat(string-typed value) = %v, want 0", got)
 	}
 }
 
@@ -187,6 +344,14 @@ func TestLoadDir(t *testing.T) {
 	if images[0].Pixels[0] != 1 || images[1].Pixels[0] != 3 || images[2].Pixels[0] != 5 {
 		t.Errorf("images not in sorted filename order: got first pixels %v, %v, %v",
 			images[0].Pixels[0], images[1].Pixels[0], images[2].Pixels[0])
+	}
+}
+
+func TestLoadError_Error(t *testing.T) {
+	le := LoadError{Path: "/tmp/bad.fits", Err: fmt.Errorf("boom")}
+	want := "/tmp/bad.fits: boom"
+	if got := le.Error(); got != want {
+		t.Errorf("LoadError.Error() = %q, want %q", got, want)
 	}
 }
 
