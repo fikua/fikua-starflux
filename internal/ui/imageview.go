@@ -158,7 +158,32 @@ func (v *ImageView) Tapped(ev *fyne.PointEvent) {
 
 func (v *ImageView) CreateRenderer() fyne.WidgetRenderer {
 	stack := container.NewStack(v.img, v.overlay, container.NewWithoutLayout(v.loupe))
-	return widget.NewSimpleRenderer(stack)
+	return &imageViewRenderer{view: v, stack: stack}
+}
+
+// imageViewRenderer is ImageView's custom renderer. Its only reason to
+// exist over widget.NewSimpleRenderer is Layout: Fyne calls Layout on
+// every resize of the owning widget, the correct hook for repositioning
+// the star-marker overlay's absolutely-positioned children (a
+// container.NewWithoutLayout never repositions its children on its own,
+// so without this, markers would visually drift off their stars whenever
+// the window/widget is resized after they were placed).
+type imageViewRenderer struct {
+	view  *ImageView
+	stack *fyne.Container
+}
+
+func (r *imageViewRenderer) Layout(size fyne.Size) {
+	r.stack.Resize(size)
+	r.view.layoutMarkers()
+}
+
+func (r *imageViewRenderer) MinSize() fyne.Size           { return r.stack.MinSize() }
+func (r *imageViewRenderer) Refresh()                     { r.stack.Refresh() }
+func (r *imageViewRenderer) Objects() []fyne.CanvasObject { return r.stack.Objects }
+func (r *imageViewRenderer) Destroy() {
+	// Nothing to release: r.stack's children (v.img/v.overlay/v.loupe) are
+	// owned by ImageView itself, not allocated per-renderer.
 }
 
 // MouseIn implements desktop.Hoverable.

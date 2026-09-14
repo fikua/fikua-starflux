@@ -112,6 +112,31 @@ func Series(obs []Observation) (points []Point, errs []error) {
 	return points, errs
 }
 
+// SkippedObservation pairs one Series-skipped epoch with the Observation it
+// came from, so a caller can attribute the failure back to its source
+// (e.g. Starflux's per-image status UI) without parsing error text.
+type SkippedObservation struct {
+	Obs Observation
+	Err error
+}
+
+// SeriesWithObservations is Series, but returns each skipped epoch's
+// source Observation alongside its error instead of a bare error. Series
+// itself is unchanged and implemented independently; this exists purely so
+// callers that need to correlate a skip back to its Observation don't have
+// to re-run DifferentialMagnitude themselves.
+func SeriesWithObservations(obs []Observation) (points []Point, skipped []SkippedObservation) {
+	for _, o := range obs {
+		p, err := DifferentialMagnitude(o)
+		if err != nil {
+			skipped = append(skipped, SkippedObservation{Obs: o, Err: err})
+			continue
+		}
+		points = append(points, p)
+	}
+	return points, skipped
+}
+
 // FitBaseline fits a straight line (DiffMag = slope*JD + intercept) by
 // ordinary least squares, using only the points whose JD falls within any
 // of the given [start, end] ranges — the "flat" baseline zone(s) the user

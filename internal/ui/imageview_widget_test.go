@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/theme"
@@ -86,6 +87,64 @@ func TestImageView_setStarsReplacesPreviousSet(t *testing.T) {
 	v.SetStars([]Star{{Name: "VAR-1", Role: RoleTarget, X: 15, Y: 15}})
 	if got := len(v.overlay.Objects); got != 2 {
 		t.Errorf("got %d overlay objects after second SetStars, want 2 (old markers must not linger)", got)
+	}
+}
+
+// TestImageView_markersRepositionOnResize is the regression test for the
+// bug where marker circles kept their screen position from whenever
+// SetImage/SetStars was last called, visually drifting off the real stars
+// once the user resized the window afterward. It places a star at one
+// widget size, resizes with NO further SetImage/SetStars call, and asserts
+// the marker moves to match positionMarker's formula at the NEW size.
+func TestImageView_markersRepositionOnResize(t *testing.T) {
+	v := NewImageView()
+	w := test.NewWindow(v)
+	defer w.Close()
+
+	initialSize := fyne.NewSize(400, 300)
+	w.Resize(initialSize)
+	v.Resize(initialSize)
+
+	v.SetImage(image.NewGray(image.Rect(0, 0, 100, 50)))
+	v.SetStars([]Star{
+		{Name: "VAR-1", Role: RoleTarget, X: 10, Y: 10},
+	})
+
+	findCircle := func() *canvas.Circle {
+		for _, o := range v.overlay.Objects {
+			if c, ok := o.(*canvas.Circle); ok {
+				return c
+			}
+		}
+		t.Fatal("no circle found in overlay")
+		return nil
+	}
+	wantPos := func(size fyne.Size) fyne.Position {
+		scale := imageDisplayScale(size, v.imgW, v.imgH)
+		offsetX, offsetY := imageDisplayOffset(size, v.imgW, v.imgH, scale)
+		const r = 10
+		cx := offsetX + float32(10)*scale // star X=10
+		cy := offsetY + float32(10)*scale // star Y=10
+		return fyne.NewPos(cx-r, cy-r)
+	}
+
+	if got, want := findCircle().Position(), wantPos(initialSize); got != want {
+		t.Fatalf("marker position before resize = %v, want %v", got, want)
+	}
+
+	// The regression scenario: resize AFTER markers are already placed,
+	// with no further SetImage/SetStars call.
+	newSize := fyne.NewSize(800, 600)
+	w.Resize(newSize)
+	v.Resize(newSize)
+
+	got := findCircle().Position()
+	want := wantPos(newSize)
+	if got != want {
+		t.Errorf("marker position after resize = %v, want %v (marker did not follow the resize)", got, want)
+	}
+	if oldPos := wantPos(initialSize); got == oldPos {
+		t.Error("marker still at the OLD size's position after resize — overlay was never re-laid-out")
 	}
 }
 

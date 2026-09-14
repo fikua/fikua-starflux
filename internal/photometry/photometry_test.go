@@ -158,6 +158,27 @@ func TestMeasure_knownFlux(t *testing.T) {
 	}
 }
 
+func TestMeasure_offCenterSeedConvergesToStarNotBoxCenter(t *testing.T) {
+	// A realistic sky background (matching the ~2818 ADU seen on the
+	// project's own v_000.fit fixture), with a star seeded a few pixels
+	// off its true center inside a halfWidth=10 (21x21) box. Before
+	// Measure subtracted the local background ahead of the first centroid
+	// pass, this flat background dominated the bg=0 weighted center of
+	// mass, so the "centroid" converged toward the search box's geometric
+	// center (30, 32) rather than the real star at (30, 30).
+	g := newGrid(61, 61, 2818)
+	addGaussianStar(g, 30, 30, 5000, 3)
+
+	ap := Aperture{R: 8, RIn: 12, ROut: 18}
+	res, err := Measure(g, 30, 32, 10, ap)
+	if err != nil {
+		t.Fatalf("Measure: %v", err)
+	}
+	if math.Abs(res.X-30) > 0.5 || math.Abs(res.Y-30) > 0.5 {
+		t.Errorf("got centroid (%.3f, %.3f), want ~(30, 30) (the real star, not the seed box's center (30, 32))", res.X, res.Y)
+	}
+}
+
 func TestMedian(t *testing.T) {
 	cases := []struct {
 		in   []float64
@@ -235,7 +256,7 @@ func TestDetectStars_findsIsolatedPeaks(t *testing.T) {
 	addGaussianStar(g, 30, 40, 1000, 2)
 	addGaussianStar(g, 50, 20, 1000, 2)
 
-	got := DetectStars(g, 100, 5)
+	got := DetectStars(g, 100, 5, DefaultSigmaMultiplier)
 	if len(got) != 3 {
 		t.Fatalf("DetectStars found %d detections, want 3: %+v", len(got), got)
 	}
@@ -259,7 +280,7 @@ func TestDetectStars_suppressesCloseDuplicates(t *testing.T) {
 	addGaussianStar(g, 20, 20, 1000, 2) // brighter
 	addGaussianStar(g, 22, 20, 400, 2)  // dimmer, close by
 
-	got := DetectStars(g, 100, 10)
+	got := DetectStars(g, 100, 10, DefaultSigmaMultiplier)
 	if len(got) != 1 {
 		t.Fatalf("DetectStars found %d detections, want 1 (close duplicate suppressed): %+v", len(got), got)
 	}
@@ -272,10 +293,10 @@ func TestDetectStars_respectsMinCounts(t *testing.T) {
 	g := newGrid(41, 41, 0)
 	addGaussianStar(g, 20, 20, 50, 2) // faint peak
 
-	if got := DetectStars(g, 100, 5); len(got) != 0 {
+	if got := DetectStars(g, 100, 5, DefaultSigmaMultiplier); len(got) != 0 {
 		t.Errorf("DetectStars with high minCounts found %d detections, want 0: %+v", len(got), got)
 	}
-	if got := DetectStars(g, 10, 5); len(got) != 1 {
+	if got := DetectStars(g, 10, 5, DefaultSigmaMultiplier); len(got) != 1 {
 		t.Errorf("DetectStars with low minCounts found %d detections, want 1", len(got))
 	}
 }
@@ -284,8 +305,99 @@ func TestDetectStars_emptyImageYieldsNoDetections(t *testing.T) {
 	g := newGrid(21, 21, 5) // flat background, no stars
 	// minCounts above the flat background level: no pixel qualifies as a
 	// candidate, regardless of the flat plateau's own local-max status.
-	if got := DetectStars(g, 100, 5); len(got) != 0 {
+	if got := DetectStars(g, 100, 5, DefaultSigmaMultiplier); len(got) != 0 {
 		t.Errorf("DetectStars on a flat image found %d detections, want 0: %+v", len(got), got)
+	}
+}
+
+func TestDetectStars_flatHighBackgroundYieldsNoDetections(t *testing.T) {
+	g := newGrid(100, 100, 2818) // flat background at a real-world-like ADU level
+	got := DetectStars(g, 0, 8, DefaultSigmaMultiplier)
+	if len(got) != 0 {
+		t.Fatalf("DetectStars on a flat high background found %d detections, want 0: %+v", len(got), got)
+	}
+}
+
+func TestDetectStars_findsStarOnHighFlatBackground(t *testing.T) {
+	g := newGrid(100, 100, 2818)
+	addGaussianStar(g, 50, 50, 5200, 3) // peak ~8018
+	got := DetectStars(g, 0, 8, DefaultSigmaMultiplier)
+	if len(got) != 1 {
+		t.Fatalf("DetectStars found %d detections, want 1: %+v", len(got), got)
+	}
+	if Distance(got[0].X, got[0].Y, 50, 50) > 1 {
+		t.Errorf("got detection at (%v, %v), want near (50, 50)", got[0].X, got[0].Y)
+	}
+}
+
+func TestEstimateBackground_constantImageHasZeroSigma(t *testing.T) {
+	g := newGrid(50, 50, 2818)
+	got := EstimateBackground(g)
+	if got.Median != 2818 {
+		t.Errorf("got Median %v, want 2818", got.Median)
+	}
+	if got.Sigma != 0 {
+		t.Errorf("got Sigma %v, want 0", got.Sigma)
+	}
+}
+
+func TestEstimateBackground_recoversKnownMedianAndSpread(t *testing.T) {
+	g := newGrid(50, 50, 0)
+	const base, delta = 3000.0, 20.0
+	for y := 0; y < g.h; y++ {
+		for x := 0; x < g.w; x++ {
+			if (x+y)%2 == 0 {
+				g.set(x, y, base-delta)
+			} else {
+				g.set(x, y, base+delta)
+			}
+		}
+	}
+	got := EstimateBackground(g)
+	if math.Abs(got.Median-base) > 1e-9 {
+		t.Errorf("got Median %v, want %v", got.Median, base)
+	}
+	wantSigma := 1.4826 * delta
+	if math.Abs(got.Sigma-wantSigma) > 1e-9 {
+		t.Errorf("got Sigma %v, want %v", got.Sigma, wantSigma)
+	}
+}
+
+func TestEstimateBackground_robustToBrightOutliers(t *testing.T) {
+	g := newGrid(100, 100, 2818)
+	addGaussianStar(g, 50, 50, 60000, 3) // one bright star among 10,000 background pixels
+
+	got := EstimateBackground(g)
+	if math.Abs(got.Median-2818) > 1 {
+		t.Errorf("got Median %v, want ~2818 (robust to a single bright outlier region)", got.Median)
+	}
+	if got.Sigma > 1 {
+		t.Errorf("got Sigma %v, want ~0 (robust to a single bright outlier region)", got.Sigma)
+	}
+}
+
+func TestMedianDisplacement_consensusAmongAgreeingStars(t *testing.T) {
+	displacements := []Displacement{
+		{DX: 1.0, DY: 2.0},
+		{DX: 1.1, DY: 1.9},
+		{DX: 0.9, DY: 2.1},
+	}
+	got := MedianDisplacement(displacements)
+	if math.Abs(got.DX-1.0) > 0.2 || math.Abs(got.DY-2.0) > 0.2 {
+		t.Errorf("MedianDisplacement(%v) = %+v, want close to (1.0, 2.0)", displacements, got)
+	}
+}
+
+func TestMedianDisplacement_robustToOneOutlier(t *testing.T) {
+	displacements := []Displacement{
+		{DX: 1.0, DY: 2.0},
+		{DX: 1.1, DY: 1.9},
+		{DX: 0.9, DY: 2.1},
+		{DX: 40.0, DY: -30.0}, // one star locked onto a wrong, distant neighbor
+	}
+	got := MedianDisplacement(displacements)
+	if math.Abs(got.DX-1.0) > 0.2 || math.Abs(got.DY-2.0) > 0.2 {
+		t.Errorf("MedianDisplacement(%v) = %+v, want close to (1.0, 2.0) despite the outlier", displacements, got)
 	}
 }
 

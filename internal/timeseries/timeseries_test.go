@@ -116,6 +116,49 @@ func TestSeries_skipsBadEpochsAndReportsErrors(t *testing.T) {
 	}
 }
 
+func TestSeriesWithObservations_skipsBadEpochsWithSource(t *testing.T) {
+	bad := Observation{JD: 2, Target: photometry.Result{NetFlux: 0}, Comp: photometry.Result{NetFlux: 1000}}
+	obs := []Observation{
+		{JD: 1, Target: photometry.Result{NetFlux: 1000}, Comp: photometry.Result{NetFlux: 1000}},
+		bad, // bad
+		{JD: 3, Target: photometry.Result{NetFlux: 900}, Comp: photometry.Result{NetFlux: 1000}},
+	}
+
+	points, skipped := SeriesWithObservations(obs)
+
+	if len(points) != 2 {
+		t.Fatalf("got %d points, want 2 (one epoch should be skipped)", len(points))
+	}
+	if points[0].JD != 1 || points[1].JD != 3 {
+		t.Errorf("got JDs %v, %v, want 1, 3", points[0].JD, points[1].JD)
+	}
+	if len(skipped) != 1 {
+		t.Fatalf("got %d skipped, want 1", len(skipped))
+	}
+	if skipped[0].Obs != bad {
+		t.Errorf("skipped[0].Obs = %+v, want the source observation %+v", skipped[0].Obs, bad)
+	}
+	if skipped[0].Err == nil {
+		t.Error("skipped[0].Err = nil, want the DifferentialMagnitude error")
+	}
+}
+
+func TestSeriesWithObservations_allValid(t *testing.T) {
+	obs := []Observation{
+		{JD: 1, Target: photometry.Result{NetFlux: 1000}, Comp: photometry.Result{NetFlux: 1000}},
+		{JD: 2, Target: photometry.Result{NetFlux: 900}, Comp: photometry.Result{NetFlux: 1000}},
+	}
+
+	points, skipped := SeriesWithObservations(obs)
+
+	if len(points) != 2 {
+		t.Fatalf("got %d points, want 2", len(points))
+	}
+	if len(skipped) != 0 {
+		t.Fatalf("got %d skipped, want 0", len(skipped))
+	}
+}
+
 func TestMergeSorted_concatenatesAndSortsByJD(t *testing.T) {
 	prev := []Point{{JD: 1}, {JD: 3}}
 	next := []Point{{JD: 2}, {JD: 4}} // deliberately interleaved with prev

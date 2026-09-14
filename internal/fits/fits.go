@@ -29,6 +29,14 @@ type Image struct {
 	Filter   string  // FILTER card value, "" if absent
 
 	Path string // source file path, set by LoadDir
+
+	// Included controls whether this image is measured by Process.
+	// Session-only UI state (not derived from file contents), left as the
+	// zero value (false) by Load/LoadDir/LoadFiles — callers that want the
+	// "everything included by default" convention (Starflux's app layer)
+	// set it explicitly after loading. Deliberately NOT persisted in saved
+	// sessions.
+	Included bool
 }
 
 // Width returns the image width in pixels.

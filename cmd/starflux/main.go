@@ -42,6 +42,8 @@ func toleranceLevelToPixels(level int) float64 {
 	return strictPx + t*(relaxedPx-strictPx)
 }
 
+const noSeriesLoadedMsg = "Open a FITS image or folder first."
+
 var fitsFileFilter = zenity.FileFilter{
 	Name:     "FITS images",
 	Patterns: []string{"*.fits", "*.fit", "*.fts"},
@@ -52,6 +54,14 @@ var starsFileFilter = zenity.FileFilter{
 	Name:     "Starflux star positions",
 	Patterns: []string{"*.json"},
 	CaseFold: true,
+}
+
+// allFilesFilter lets Load stars... surface files saved without a .json
+// extension (e.g. the save dialog wasn't given one explicitly), which
+// starsFileFilter alone would hide.
+var allFilesFilter = zenity.FileFilter{
+	Name:     "All files",
+	Patterns: []string{"*"},
 }
 
 var sessionFileFilter = zenity.FileFilter{
@@ -94,6 +104,12 @@ type appState struct {
 	// watchStop is non-nil while watch-folder mode is running (at most one
 	// watch at a time); closing it signals the polling goroutine to stop.
 	watchStop chan struct{}
+
+	// imageStatus records each loaded image's outcome from the most recent
+	// Process run, keyed by img.Path, so the Series inspector dialog can
+	// show accurate status any time it's opened — not just immediately
+	// after processing. Reset to nil whenever a new series is loaded.
+	imageStatus map[string]imageStatus
 }
 
 func newAppState(win fyne.Window) *appState {
@@ -174,7 +190,11 @@ func (s *appState) loadSeries(loaded []*fits.Image, loadErrs []fits.LoadError, e
 		dialog.ShowError(err, s.win)
 		return
 	}
+	for _, img := range loaded {
+		img.Included = true
+	}
 	s.series = loaded
+	s.imageStatus = nil
 	s.clearStars()
 	if s.newSessionCheck.Checked {
 		s.accumulatedPoints = nil
@@ -239,6 +259,7 @@ func main() {
 	controls := container.NewVBox(
 		sectionHeader("Series"),
 		s.seriesLabel,
+		widget.NewButton("Series...", s.showSeriesInspectorDialog),
 
 		widget.NewSeparator(),
 		sectionHeader("Stars"),
@@ -259,6 +280,7 @@ func main() {
 		widget.NewSeparator(),
 		sectionHeader("Process"),
 		widget.NewButton("Process", s.processAction),
+		widget.NewButton("Clear results...", s.clearResultsAction),
 	)
 
 	sidebar := container.NewVScroll(controls)
@@ -542,7 +564,7 @@ func (s *appState) saveStarsAction() {
 
 func (s *appState) loadStarsAction() {
 	go func() {
-		path, err := zenity.SelectFile(zenity.FileFilters{starsFileFilter})
+		path, err := zenity.SelectFile(zenity.FileFilters{starsFileFilter, allFilesFilter})
 		if errors.Is(err, zenity.ErrCanceled) {
 			return
 		}
@@ -632,14 +654,14 @@ func starsWithRole(stars []ui.Star, role ui.StarRole) []ui.Star {
 // is a scientific choice the tool shouldn't guess.
 func (s *appState) detectStarsAction() {
 	if len(s.series) == 0 {
-		dialog.ShowInformation("Starflux", "Open a FITS image or folder first.", s.win)
+		dialog.ShowInformation("Starflux", noSeriesLoadedMsg, s.win)
 		return
 	}
 
-	const minCounts = 1000.0  // TODO: consider exposing as a config.Config field in a future release
+	const minCounts = 1000.0  // absolute floor only; DetectStars combines this with an adaptive per-image threshold. TODO: consider exposing as a config.Config field in a future release
 	const minSeparation = 8.0 // px; larger than a typical aperture radius to avoid double-detecting one star
 
-	detections := photometry.DetectStars(s.series[0], minCounts, minSeparation)
+	detections := photometry.DetectStars(s.series[0], minCounts, minSeparation, photometry.DefaultSigmaMultiplier)
 	var toAdd []photometry.Detection
 	for _, d := range detections {
 		if !s.nearExistingStar(d.X, d.Y, minSeparation) {
@@ -712,7 +734,7 @@ func otherStars(stars []ui.Star, exclude string) []ui.Star {
 // the rest, Process everything, then flag which look variable).
 func (s *appState) searchVariablesAction() {
 	if len(s.series) == 0 {
-		dialog.ShowInformation("Starflux", "Open a FITS image or folder first.", s.win)
+		dialog.ShowInformation("Starflux", noSeriesLoadedMsg, s.win)
 		return
 	}
 
@@ -784,7 +806,7 @@ func showVariableSearchResults(parent fyne.Window, results []variableCandidateRe
 
 func (s *appState) processAction() {
 	if len(s.series) == 0 {
-		dialog.ShowInformation("Starflux", "Open a FITS image or folder first.", s.win)
+		dialog.ShowInformation("Starflux", noSeriesLoadedMsg, s.win)
 		return
 	}
 
@@ -795,20 +817,25 @@ func (s *appState) processAction() {
 		return
 	}
 
+	if s.imageStatus == nil {
+		s.imageStatus = make(map[string]imageStatus)
+	}
+
 	for _, target := range targets {
 		result := s.measureSeries(target, comps)
 
-		newPoints, seriesErrs := timeseries.Series(result.obs)
+		newPoints, skipped := timeseries.SeriesWithObservations(result.obs)
+		s.recordSkippedObservations(target.Name, result.attempted, skipped)
 		allPoints := timeseries.MergeSorted(s.accumulatedPoints[target.Name], newPoints)
 
 		if len(allPoints) == 0 {
-			dialog.ShowError(fmt.Errorf("%s: no valid measurements across %d image(s): %v", target.Name, len(s.series), seriesErrs), s.win)
+			dialog.ShowError(fmt.Errorf("%s: no valid measurements across %d image(s)", target.Name, len(s.series)), s.win)
 			continue
 		}
 
-		// Persist for a future "continue previous session" run, whether or
-		// not this run stopped early — today's clean run can be tomorrow's
-		// "previous session" if a bad frame shows up later.
+		// Persist for a future "continue previous session" run — today's
+		// clean run can be tomorrow's "previous session" if a bad frame
+		// shows up later.
 		if s.accumulatedPoints == nil {
 			s.accumulatedPoints = make(map[string][]timeseries.Point)
 		}
@@ -826,59 +853,112 @@ func (s *appState) processAction() {
 		}
 		showLightCurve(s, s.win, allPoints, drift, s.series[0].Filter, target.Name, target, comps, watchedDir)
 
-		if result.stopErr != nil {
-			dialog.ShowError(seriesStoppedError(result.stoppedAt, result.stopErr, len(allPoints)), s.win)
-		} else if len(seriesErrs) > 0 {
-			dialog.ShowInformation("Starflux", fmt.Sprintf("%s: %d epoch(s) skipped: %v", target.Name, len(seriesErrs), seriesErrs), s.win)
+		if len(skipped) > 0 {
+			dialog.ShowInformation("Starflux", fmt.Sprintf("%s: %d epoch(s) skipped. Open \"Series...\" to see which images and why.", target.Name, len(skipped)), s.win)
 		}
 	}
 }
 
-// seriesStoppedError formats the message shown when a series measurement
-// stops partway through, naming the file that failed and how to resume.
-func seriesStoppedError(stoppedAt string, cause error, pointsSoFar int) error {
-	return fmt.Errorf(
-		"stopped at %s: %v\n\n%d point(s) measured so far are shown above.\nFix or remove this image, then reload the remaining files with \"New session\" unchecked to continue this run.",
-		filepath.Base(stoppedAt), cause, pointsSoFar,
-	)
+// clearResultsAction discards every accumulated light-curve point across
+// all targets (s.accumulatedPoints), without touching the loaded series or
+// marked stars. This is the only way to reset accumulated results without
+// reloading the whole series from disk — the "New session" menu toggle
+// only takes effect on the NEXT series load (loadSeries), so re-running
+// Process after changing which star is the Target (or after a tracking
+// fix changes measured positions) would otherwise silently merge the new
+// run's points with stale ones from a previous run at the same JDs,
+// producing a light curve with multiple disagreeing bands (a real
+// reported case: re-processing after a bug fix showed 3 separate Δm
+// bands instead of one curve, from old and new points at the same
+// epochs both being kept by MergeSorted, which does not deduplicate).
+func (s *appState) clearResultsAction() {
+	if len(s.accumulatedPoints) == 0 {
+		dialog.ShowInformation("Starflux", "No accumulated results to clear.", s.win)
+		return
+	}
+	dialog.ShowConfirm("Clear results", "Discard all accumulated light-curve results? This cannot be undone; the loaded series and marked stars are kept.", func(confirmed bool) {
+		if !confirmed {
+			return
+		}
+		s.accumulatedPoints = nil
+	}, s.win)
 }
 
-// measureSeriesResult is measureSeries's outcome: obs holds every image
-// successfully measured, in order; stoppedAt/stopErr describe the first
-// image that failed, if any. A full success has stopErr == nil.
+// recordSkippedObservations overwrites s.imageStatus for every image whose
+// DifferentialMagnitude computation failed (e.g. non-positive net flux),
+// correlating each skipped Observation back to its source image by exact
+// JD match against attempted — safe here because attempted is exactly the
+// slice result.obs was built from, so JDs are copied verbatim with no
+// intervening float arithmetic on either side.
+func (s *appState) recordSkippedObservations(targetName string, attempted []*fits.Image, skipped []timeseries.SkippedObservation) {
+	if len(skipped) == 0 {
+		return
+	}
+	byJD := make(map[float64]*fits.Image, len(attempted))
+	for _, img := range attempted {
+		byJD[img.JD] = img
+	}
+	for _, sk := range skipped {
+		if img, ok := byJD[sk.Obs.JD]; ok {
+			s.imageStatus[img.Path] = imageStatus{kind: statusError, target: targetName, message: sk.Err.Error()}
+		}
+	}
+}
+
+// measureSeriesResult is measureSeries's outcome: obs holds every included
+// image successfully measured, in order; attempted is the index-aligned
+// slice of *fits.Image each entry in obs came from, so callers can recover
+// which file produced which point without JD matching.
 type measureSeriesResult struct {
 	obs       []timeseries.Observation
-	drift     []float64 // per-frame target displacement in pixels, index-aligned with obs
-	stoppedAt string    // img.Path of the first image that failed to measure; "" if none did
-	stopErr   error
+	attempted []*fits.Image // index-aligned with obs
+	drift     []float64     // per-frame target displacement in pixels, index-aligned with obs
 }
 
 // measureSeries runs aperture photometry for one target star and combines
 // all comparison stars (by averaged flux, see photometry.CombineComparisons)
-// into a synthetic comparison measurement, for every image in the series.
-// Each star's position is tracked frame to frame: the first image seeds
-// from the star's manually marked position, and every following image
-// seeds its centroid search from the previous image's refined position
-// instead of the original fixed coordinates, matching FotoDif's handling
-// of small field drift over a session. A frame-to-frame jump larger than
-// s.toleranceLevel allows (see toleranceLevelToPixels) is treated as a
-// real problem — a cloud, a bad recentering — rather than ordinary drift.
-// measureSeries stops at the first image that fails to measure or whose
-// tracked star jumped too far, rather than aborting the whole run, so
-// everything measured up to that point is preserved and can be shown to
-// the user (and later resumed) instead of discarded.
+// into a synthetic comparison measurement, for every INCLUDED image in the
+// series. Each star's position is tracked frame to frame: the first
+// attempted image seeds from the star's manually marked position, and every
+// following attempted image seeds its centroid search from the previous
+// successfully-measured image's refined position instead of the original
+// fixed coordinates, matching FotoDif's handling of small field drift over
+// a session. A frame-to-frame jump larger than the configured tolerance
+// allows (see toleranceLevelToPixels), or any other photometry failure,
+// marks that one image as an error in s.imageStatus and moves on to the
+// next image — it does not stop the whole series. An excluded image
+// (img.Included == false) is skipped without even attempting measurement,
+// recorded as statusExcluded, and does not disturb tracking continuity:
+// the tracker's position simply carries over unchanged to the next
+// attempted image, identical to how a measurement failure already leaves
+// it unchanged.
 func (s *appState) measureSeries(target ui.Star, comps []ui.Star) measureSeriesResult {
 	tracked := newStarTracker(target, comps)
+	tracked.cadenceJD = medianCadenceJD(s.series)
 
 	obs := make([]timeseries.Observation, 0, len(s.series))
+	attempted := make([]*fits.Image, 0, len(s.series))
 	for _, img := range s.series {
+		if !img.Included {
+			s.imageStatus[img.Path] = imageStatus{kind: statusExcluded}
+			tracked.framesSinceSuccess++
+			tracked.lastJD = img.JD
+			continue
+		}
 		ob, err := measureOneImage(tracked, img, s.cfg)
 		if err != nil {
-			return measureSeriesResult{obs: obs, drift: tracked.targetDrift, stoppedAt: img.Path, stopErr: err}
+			// measureFrame already advanced tracked.lastJD to img.JD before
+			// returning the error, regardless of outcome.
+			s.imageStatus[img.Path] = imageStatus{kind: statusError, target: target.Name, message: err.Error(), trackedStars: tracked.snapshotStars()}
+			tracked.framesSinceSuccess++
+			continue
 		}
+		s.imageStatus[img.Path] = imageStatus{kind: statusOK, target: target.Name, recoveredAfterGap: tracked.lastReacquireGap, trackedStars: tracked.snapshotStars()}
+		tracked.lastReacquireGap = 0
 		obs = append(obs, ob)
+		attempted = append(attempted, img)
 	}
-	return measureSeriesResult{obs: obs, drift: tracked.targetDrift}
+	return measureSeriesResult{obs: obs, attempted: attempted, drift: tracked.targetDrift}
 }
 
 // measureOneImage measures target and combined comparison flux for a
@@ -888,11 +968,7 @@ func (s *appState) measureSeries(target ui.Star, comps []ui.Star) measureSeriesR
 // tracking/tolerance logic one new image at a time, instead of re-deriving
 // it — tracker is deliberately long-lived across calls in that case.
 func measureOneImage(tracker *starTracker, img *fits.Image, cfg config.Config) (timeseries.Observation, error) {
-	targetRes, err := tracker.measureTarget(img, cfg)
-	if err != nil {
-		return timeseries.Observation{}, err
-	}
-	compResults, err := tracker.measureComps(img, cfg)
+	targetRes, compResults, drift, err := tracker.measureFrame(img, cfg)
 	if err != nil {
 		return timeseries.Observation{}, err
 	}
@@ -900,6 +976,7 @@ func measureOneImage(tracker *starTracker, img *fits.Image, cfg config.Config) (
 	if err != nil {
 		return timeseries.Observation{}, err
 	}
+	tracker.targetDrift = append(tracker.targetDrift, drift)
 	return timeseries.Observation{JD: img.JD, Target: targetRes, Comp: combinedComp}, nil
 }
 
@@ -909,11 +986,42 @@ func measureOneImage(tracker *starTracker, img *fits.Image, cfg config.Config) (
 type starTracker struct {
 	targetName       string
 	targetX, targetY float64
+	targetFlux       float64 // most recently accepted NetFlux for the target; 0 until first success
 	targetDrift      []float64 // per-frame photometry.Distance(prev, new) for the target, one entry per successfully measured frame
 
 	compNames []string
 	compX     []float64
 	compY     []float64
+	compFlux  []float64 // most recently accepted NetFlux per comparison star; 0 until first success
+
+	// framesSinceSuccess counts every skipped attempt (excluded or
+	// errored) since the tracked position was last advanced; reset to 0
+	// on any success, whether ordinary or via reacquireStar. Gates
+	// whether a tolerance failure gets a fallback re-acquisition attempt:
+	// a failure with framesSinceSuccess == 0 (two back-to-back attempted
+	// frames) isn't explained by seed staleness, so it's reported exactly
+	// as before with no fallback.
+	framesSinceSuccess int
+	// lastReacquireGap records the gap size a successful reacquisition
+	// just bridged, purely for Series-inspector display; 0 after an
+	// ordinary first-attempt success.
+	lastReacquireGap int
+
+	// lastJD is the Julian Date of the most recently attempted image
+	// (included and measured, whether it succeeded or failed) — 0 before
+	// the first frame. Used with cadenceJD to detect a missing-file gap
+	// in the series (e.g. v_032.fit then v_034.fit with no v_033.fit on
+	// disk): unlike an excluded image, a missing file leaves no trace in
+	// s.series for framesSinceSuccess to count, so the frame-index-based
+	// gap tracking alone would treat it as an ordinary single-frame step
+	// and under-tolerate the correspondingly larger real-world
+	// displacement.
+	lastJD float64
+	// cadenceJD is the series' typical (median) time interval between
+	// consecutive images, computed once up front by medianCadenceJD. 0 if
+	// it couldn't be determined (fewer than 2 images with usable JDs),
+	// in which case JD-based gap detection is skipped entirely.
+	cadenceJD float64
 }
 
 func newStarTracker(target ui.Star, comps []ui.Star) *starTracker {
@@ -924,6 +1032,7 @@ func newStarTracker(target ui.Star, comps []ui.Star) *starTracker {
 		compNames:  make([]string, len(comps)),
 		compX:      make([]float64, len(comps)),
 		compY:      make([]float64, len(comps)),
+		compFlux:   make([]float64, len(comps)),
 	}
 	for i, c := range comps {
 		t.compNames[i] = c.Name
@@ -933,40 +1042,548 @@ func newStarTracker(target ui.Star, comps []ui.Star) *starTracker {
 	return t
 }
 
-// measureTarget measures the target star at its currently tracked
-// position, advancing that position on success.
-func (t *starTracker) measureTarget(img *fits.Image, cfg config.Config) (photometry.Result, error) {
-	maxJump := toleranceLevelToPixels(cfg.ToleranceLevel)
-	res, err := photometry.Measure(img, int(t.targetX), int(t.targetY), cfg.CentroidHalfWidth, cfg.Aperture)
-	if err != nil {
-		return photometry.Result{}, fmt.Errorf("%s: target: %w", t.targetName, err)
+// medianCadenceJD returns the median JD gap between consecutive images in
+// series (assumed already in acquisition order), as the series' typical
+// single-frame interval — used to detect when a frame-to-frame JD gap is
+// actually several intervals wide (e.g. a missing file on disk) rather
+// than one. Returns 0 if fewer than 2 images have a usable (non-zero) JD,
+// in which case callers should skip JD-based gap detection entirely.
+func medianCadenceJD(series []*fits.Image) float64 {
+	var gaps []float64
+	for i := 1; i < len(series); i++ {
+		prev, cur := series[i-1].JD, series[i].JD
+		if prev <= 0 || cur <= 0 || cur <= prev {
+			continue
+		}
+		gaps = append(gaps, cur-prev)
 	}
-	dist := photometry.Distance(t.targetX, t.targetY, res.X, res.Y)
-	if dist > maxJump {
-		return photometry.Result{}, fieldShiftError(t.targetName, t.targetX, t.targetY, res.X, res.Y, cfg.ToleranceLevel, maxJump)
+	if len(gaps) == 0 {
+		return 0
 	}
-	t.targetDrift = append(t.targetDrift, dist)
-	t.targetX, t.targetY = res.X, res.Y
-	return res, nil
+	sort.Float64s(gaps)
+	return gaps[len(gaps)/2]
 }
 
-// measureComps measures every comparison star at its currently tracked
-// position, advancing each on success, stopping at the first failure.
-func (t *starTracker) measureComps(img *fits.Image, cfg config.Config) ([]photometry.Result, error) {
-	maxJump := toleranceLevelToPixels(cfg.ToleranceLevel)
-	results := make([]photometry.Result, 0, len(t.compNames))
-	for i, name := range t.compNames {
-		r, err := photometry.Measure(img, int(t.compX[i]), int(t.compY[i]), cfg.CentroidHalfWidth, cfg.Aperture)
-		if err != nil {
-			return nil, fmt.Errorf("comparison %s: %w", name, err)
-		}
-		if !photometry.WithinTolerance(t.compX[i], t.compY[i], r.X, r.Y, maxJump) {
-			return nil, fieldShiftError(name, t.compX[i], t.compY[i], r.X, r.Y, cfg.ToleranceLevel, maxJump)
-		}
-		t.compX[i], t.compY[i] = r.X, r.Y
-		results = append(results, r)
+// jdCadenceGap returns how many typical frame intervals elapsed between
+// lastJD and currentJD, rounded to the nearest whole interval and floored
+// at 1 — e.g. 1 for an ordinary consecutive frame, 2 if one frame's worth
+// of time was skipped (such as a missing file between two present ones),
+// and so on. Returns 1 (no adjustment) whenever gap detection isn't
+// possible: no prior frame yet (lastJD == 0), no usable cadence, or a
+// non-positive/unreasonable elapsed time.
+func jdCadenceGap(lastJD, currentJD, cadenceJD float64) int {
+	if lastJD <= 0 || currentJD <= 0 || cadenceJD <= 0 || currentJD <= lastJD {
+		return 1
 	}
-	return results, nil
+	intervals := int(math.Round((currentJD - lastJD) / cadenceJD))
+	if intervals < 1 {
+		return 1
+	}
+	return intervals
+}
+
+// fieldShiftSearchHalfWidth bounds how far detectFieldShift looks for a
+// shared displacement, in pixels each direction — generous enough to
+// cover a deliberate telescope recentering (tens of pixels), but bounded
+// so the scan stays cheap and doesn't match across an entire large image.
+// fieldShiftBinPx is the bucket size candidate displacement vectors are
+// rounded to before voting, coarse enough that independently-noisy
+// per-star centroids on a genuinely shared shift still land in the same
+// bucket, but fine enough not to conflate two genuinely different shifts.
+// fieldShiftMatchRadiusPx is how close a shifted tracked position must
+// land to a real detection to count as matching it, when scoring the
+// winning bucket's vector against every tracked star (not just the ones
+// that happened to generate votes for it).
+// fieldShiftMinMatchFraction is the minimum fraction of tracked stars
+// that must match under the winning vector for it to be accepted as a
+// real field shift, guarding against a coincidental small-cluster
+// agreement in a crowded field being mistaken for the whole group moving
+// together.
+const (
+	fieldShiftSearchHalfWidth  = 60.0
+	fieldShiftBinPx            = 4.0
+	fieldShiftMatchRadiusPx    = 3.0
+	fieldShiftMinMatchFraction = 0.5
+)
+
+// detectFieldShift looks for one displacement vector (dx, dy) that
+// explains most of names' tracked stars moving together between the
+// tracker's last-known positions (lastX, lastY) and img — the signature
+// of the observer recentering or re-slewing the telescope between
+// exposures, rather than each star independently drifting.
+//
+// A per-star "closest candidate within range" vote (tried first, and
+// simpler) does NOT work in a crowded field: with hundreds of faint
+// detections scattered throughout the search radius, each tracked star's
+// single closest candidate is essentially a random nearby star, not
+// necessarily the one it actually shifted to — the resulting per-star
+// vectors are mostly noise with no shared vector to vote for, even when a
+// real uniform shift exists (confirmed against this exact reported case:
+// 873 candidates within 60px of each tracked star made every "nearest
+// neighbor" a false match).
+//
+// Instead, this generates displacement HYPOTHESES from every (tracked
+// star, nearby candidate) pair — not just the single closest one — since
+// the true shift vector is guaranteed to be among these pairs' vectors
+// for at least the stars it actually explains. Each hypothesis is
+// rounded into a coarse bucket (fieldShiftBinPx) and buckets are ranked
+// by how many DISTINCT tracked stars contributed a hypothesis to them
+// (one vote per star, so one crowded star can't stuff a bucket). The
+// winning bucket's mean vector is then scored for real: apply it to
+// EVERY tracked star (not just the ones that voted for this bucket) and
+// count how many land within fieldShiftMatchRadiusPx of an actual
+// detection. Only a vector that explains at least
+// fieldShiftMinMatchFraction of all tracked stars this way is accepted.
+func detectFieldShift(img *fits.Image, names []string, lastX, lastY []float64, cfg config.Config) (dx, dy float64, ok bool) {
+	if len(names) == 0 {
+		return 0, 0, false
+	}
+	candidates := photometry.DetectStars(img, reacquireMinCounts, 1, photometry.DefaultSigmaMultiplier)
+	if len(candidates) == 0 {
+		return 0, 0, false
+	}
+
+	type bucket struct {
+		sumDX, sumDY float64
+		n            int
+		starsSeen    map[int]bool
+	}
+	buckets := map[[2]int]*bucket{}
+	for i := range names {
+		seenInStar := map[[2]int]bool{}
+		for ci := range candidates {
+			c := &candidates[ci]
+			ddx := c.X - lastX[i]
+			ddy := c.Y - lastY[i]
+			if math.Hypot(ddx, ddy) > fieldShiftSearchHalfWidth {
+				continue
+			}
+			key := [2]int{int(math.Round(ddx / fieldShiftBinPx)), int(math.Round(ddy / fieldShiftBinPx))}
+			if seenInStar[key] {
+				continue // this star already voted for this bucket via a closer candidate
+			}
+			seenInStar[key] = true
+			b, exists := buckets[key]
+			if !exists {
+				b = &bucket{starsSeen: map[int]bool{}}
+				buckets[key] = b
+			}
+			b.sumDX += ddx
+			b.sumDY += ddy
+			b.n++
+			b.starsSeen[i] = true
+		}
+	}
+
+	var winner *bucket
+	for _, b := range buckets {
+		if winner == nil || len(b.starsSeen) > len(winner.starsSeen) {
+			winner = b
+		}
+	}
+	if winner == nil || winner.n == 0 {
+		return 0, 0, false
+	}
+	candidateDX := winner.sumDX / float64(winner.n)
+	candidateDY := winner.sumDY / float64(winner.n)
+
+	matches := 0
+	for i := range names {
+		px, py := lastX[i]+candidateDX, lastY[i]+candidateDY
+		for ci := range candidates {
+			if photometry.Distance(px, py, candidates[ci].X, candidates[ci].Y) <= fieldShiftMatchRadiusPx {
+				matches++
+				break
+			}
+		}
+	}
+	if float64(matches) < fieldShiftMinMatchFraction*float64(len(names)) {
+		return 0, 0, false
+	}
+	return candidateDX, candidateDY, true
+}
+
+// snapshotStars returns the tracker's current per-star positions (target
+// and every comparison) as []ui.Star, for surfacing in diagnostic UI (the
+// Series inspector's per-image preview) — not used in the measurement
+// path itself.
+func (t *starTracker) snapshotStars() []ui.Star {
+	stars := make([]ui.Star, 0, 1+len(t.compNames))
+	stars = append(stars, ui.Star{Name: t.targetName, Role: ui.RoleTarget, X: t.targetX, Y: t.targetY})
+	for i, name := range t.compNames {
+		stars = append(stars, ui.Star{Name: name, Role: ui.RoleComparison, X: t.compX[i], Y: t.compY[i]})
+	}
+	return stars
+}
+
+// patternToleranceMultiplier scales toleranceLevelToPixels to get the max
+// allowed deviation between one star's own frame-to-frame displacement and
+// the group's consensus displacement (photometry.MedianDisplacement).
+//
+// This is TIGHTER than the per-star tolerance (< 1), not looser — by
+// design: a star's own tolerance check compares its new position against
+// its own single, possibly-noisy last position, but the pattern check
+// compares against the consensus of several independently-tracked stars,
+// a materially more precise reference. A looser (>1) multiplier would be
+// nearly unable to catch the failure mode this check exists for: by the
+// triangle inequality, a star that passes its OWN tolerance (moved at
+// most maxJump from its last position) can only deviate from a
+// near-stationary group consensus by at most ~maxJump — so a multiplier
+// >= 1 would only ever trigger when the rest of the group is ALSO moving
+// by more than a full maxJump, i.e. only during large, obvious drift,
+// exactly the case that does NOT need this check (ordinary tolerance
+// already handles it). The reported real-world failure is the opposite:
+// small, unremarkable individual displacements, with one star pointed in
+// a different direction than everyone else — a tighter threshold is what
+// makes that catchable.
+const patternToleranceMultiplier = 0.6
+
+// trackedStarMeasurement is one star's outcome from a single independent
+// measurement attempt within measureFrame: its measured Result, its
+// displacement from its previous tracked position, and whether it passed
+// its own per-star tolerance check (see measureFrame for how this feeds
+// the group consistency check).
+type trackedStarMeasurement struct {
+	name               string
+	lastX              float64 // this star's tracked position BEFORE this frame
+	lastY              float64
+	res                photometry.Result
+	disp               photometry.Displacement
+	withinOwnTolerance bool
+}
+
+// measureFrame measures the target and every comparison star for one
+// image. Each star is first measured independently (ordinary per-star
+// tolerance + reacquire); every star that passes its own check then has
+// its displacement cross-checked against
+// the group's consensus displacement (photometry.MedianDisplacement) —
+// this catches a star that has quietly locked onto the wrong, but real
+// and nearby, star: a wrong lock still produces a small, "normal-looking"
+// frame-to-frame delta that would pass ordinary per-star tolerance, but
+// disagrees with how every OTHER tracked star moved this frame, since
+// real field drift (imperfect mount tracking) shifts the whole frame by
+// approximately one common vector. A star disagreeing with the consensus
+// by more than patternToleranceMultiplier*maxJump gets one more
+// reacquireStar attempt, this time seeded at the CONSENSUS-predicted
+// position (its own last position plus the consensus displacement)
+// instead of its own possibly-wrong measurement, since the consensus is a
+// better estimate of where it should actually be this frame. A star that
+// still can't produce a consistent candidate fails the whole frame, with
+// an error naming the pattern mismatch distinctly from an ordinary
+// tolerance failure.
+//
+// The returned drift distance is the target's own displacement, NOT yet
+// appended to t.targetDrift — the caller (measureOneImage) only commits
+// it once the whole frame (target AND comparisons) succeeds, since a
+// later comparison-star failure means this frame contributes no
+// observation at all, and an unconditionally appended drift entry would
+// silently desync t.targetDrift from the eventual obs/attempted slices
+// built in measureSeries (they're meant to stay index-aligned, per
+// measureSeriesResult's doc comment).
+func (t *starTracker) measureFrame(img *fits.Image, cfg config.Config) (targetRes photometry.Result, compResults []photometry.Result, targetDrift float64, err error) {
+	// cadenceGap counts how many typical frame intervals actually elapsed
+	// since the last attempted image, per the images' own timestamps —
+	// normally 1, but larger when a file is missing from the series on
+	// disk (an interval framesSinceSuccess can't see, since a missing
+	// file has no entry in s.series to count at all). Scaling maxJump and
+	// the reacquire search by this real elapsed time, not just by
+	// skipped-attempt count, keeps tolerance matched to how far the star
+	// could plausibly have actually moved.
+	cadenceGap := jdCadenceGap(t.lastJD, img.JD, t.cadenceJD)
+	t.lastJD = img.JD
+	maxJump := toleranceLevelToPixels(cfg.ToleranceLevel) * float64(cadenceGap)
+
+	names := make([]string, 0, 1+len(t.compNames))
+	lastX := make([]float64, 0, 1+len(t.compNames))
+	lastY := make([]float64, 0, 1+len(t.compNames))
+	lastFlux := make([]float64, 0, 1+len(t.compNames))
+	names = append(names, t.targetName)
+	lastX = append(lastX, t.targetX)
+	lastY = append(lastY, t.targetY)
+	lastFlux = append(lastFlux, t.targetFlux)
+	names = append(names, t.compNames...)
+	lastX = append(lastX, t.compX...)
+	lastY = append(lastY, t.compY...)
+	lastFlux = append(lastFlux, t.compFlux...)
+
+	measureAt := func(i int, x, y float64) (photometry.Result, error) {
+		return photometry.Measure(img, int(x), int(y), cfg.CentroidHalfWidth, cfg.Aperture)
+	}
+
+	// attempt runs the ordinary per-star tolerance + group-pattern-consensus
+	// pass seeded at seedX/seedY (searching from there, but still measuring
+	// each star's displacement against its real lastX/lastY), and returns
+	// the resolved measurements. It fails with patternMismatchErr set when
+	// a star fails both its own tolerance AND the group consensus with no
+	// successful reacquisition — the signal measureFrame uses below to
+	// retry once via detectFieldShift before giving up for real.
+	attempt := func(seedX, seedY []float64) (result []trackedStarMeasurement, reacquired bool, patternMismatchErr error, hardErr error) {
+		measurements := make([]trackedStarMeasurement, len(names))
+		var reacquiredAny bool
+		for i, name := range names {
+			res, measureErr := measureAt(i, seedX[i], seedY[i])
+			// A position that passes WithinTolerance is not, by itself,
+			// proof the tracker still has the right star: a slow, gradual
+			// drift toward a nearby patch of pure background produces a
+			// small, individually-unremarkable frame-to-frame displacement
+			// at every step, so it never trips WithinTolerance OR (with
+			// few comparison stars — even just 1 — giving the group
+			// consensus little discriminating power) the pattern check
+			// either. A real reported case had exactly this: a bright
+			// comparison star's tracked position quietly drifted onto an
+			// empty patch over several frames, each step innocuous on its
+			// own, until its NetFlux (dominated by background, since the
+			// real star was no longer inside the aperture) went slightly
+			// negative. Cross-checking flux catches this even when
+			// position alone can't: a real star's flux is stable
+			// frame-to-frame (that IS what's being measured), so a
+			// separately-drifting flux alongside "fine" position is the
+			// signature of tracking something other than the real star.
+			fluxOK := lastFlux[i] <= 0 || fluxWithinTolerance(lastFlux[i], res.NetFlux)
+			if measureErr == nil && photometry.WithinTolerance(lastX[i], lastY[i], res.X, res.Y, maxJump) && fluxOK {
+				measurements[i] = trackedStarMeasurement{
+					name:  name,
+					lastX: lastX[i], lastY: lastY[i],
+					res:                res,
+					disp:               photometry.Displacement{DX: res.X - lastX[i], DY: res.Y - lastY[i]},
+					withinOwnTolerance: true,
+				}
+				continue
+			}
+			if measureErr != nil {
+				// A hard Measure failure (e.g. no signal in the search box at
+				// all) is not something the ordinary group-pattern check
+				// (below, which needs a displacement to compare) can
+				// rescue directly — but it always gets a local
+				// reacquireStar attempt first, even on the very first
+				// failure after a success (gapFrames floored at 1): the
+				// star may simply be sitting just outside the search box,
+				// which reacquireStar can resolve immediately rather than
+				// only after a gap has already accumulated. If THAT also
+				// fails, this is reported as a patternMismatchErr (not a
+				// hard, unretryable error): a large enough shared field
+				// shift can push a star's search box onto a patch with no
+				// signal at all, not just background noise, and that's
+				// still exactly the case detectFieldShift exists to
+				// recover from — the caller gets one retry with a
+				// wide-area scan before giving up for real.
+				reacq, reacqErr := reacquireStar(img, lastX[i], lastY[i], reacquireGapFrames(t.framesSinceSuccess, cadenceGap), lastFlux[i], cfg)
+				if reacqErr != nil {
+					return nil, false, fmt.Errorf("%s: %w", name, measureErr), nil
+				}
+				reacquiredAny = true
+				measurements[i] = trackedStarMeasurement{
+					name:  name,
+					lastX: lastX[i], lastY: lastY[i],
+					res:                reacq,
+					disp:               photometry.Displacement{DX: reacq.X - lastX[i], DY: reacq.Y - lastY[i]},
+					withinOwnTolerance: true,
+				}
+				continue
+			}
+			// Measure succeeded but exceeded this star's own tolerance. This
+			// is NOT failed immediately (regardless of t.framesSinceSuccess):
+			// the direct measurement's displacement is recorded as a
+			// pending/unconfirmed candidate, and the group-pattern phase
+			// below gets the chance to either confirm it belongs with the
+			// group after all (a real, if unusually large, shared field
+			// shift) or reacquire it near the consensus position instead.
+			measurements[i] = trackedStarMeasurement{
+				name:  name,
+				lastX: lastX[i], lastY: lastY[i],
+				res:                res,
+				disp:               photometry.Displacement{DX: res.X - lastX[i], DY: res.Y - lastY[i]},
+				withinOwnTolerance: false,
+			}
+		}
+
+		// Group-pattern phase: every star not already confirmed within its own
+		// tolerance (including ones that failed it outright above) is
+		// evaluated against the group's consensus displacement. At least 2
+		// stars are needed for a consensus to mean anything; with only 1 (no
+		// comparison stars at all — not the normal case, since Process
+		// requires at least one, but handled correctly regardless), a
+		// tolerance failure falls back to reacquireStar directly, since
+		// there's no group to check against.
+		if len(measurements) < 2 {
+			for i, m := range measurements {
+				if m.withinOwnTolerance {
+					continue
+				}
+				reacq, reacqErr := reacquireStar(img, m.lastX, m.lastY, reacquireGapFrames(t.framesSinceSuccess, cadenceGap), lastFlux[i], cfg)
+				if reacqErr != nil {
+					return nil, false, nil, fieldShiftError(m.name, m.lastX, m.lastY, m.res.X, m.res.Y, cfg.ToleranceLevel, maxJump)
+				}
+				reacquiredAny = true
+				measurements[i] = trackedStarMeasurement{
+					name:  m.name,
+					lastX: m.lastX, lastY: m.lastY,
+					res:                reacq,
+					disp:               photometry.Displacement{DX: reacq.X - m.lastX, DY: reacq.Y - m.lastY},
+					withinOwnTolerance: true,
+				}
+			}
+			return measurements, reacquiredAny, nil, nil
+		}
+
+		disps := make([]photometry.Displacement, len(measurements))
+		for i, m := range measurements {
+			disps[i] = m.disp
+		}
+		consensus := photometry.MedianDisplacement(disps)
+		patternMaxJump := patternToleranceMultiplier * maxJump
+		// With exactly 2 tracked stars (target + 1 comparison — the
+		// smallest group this branch ever runs for, since len<2 is
+		// handled separately above), MedianDisplacement of 2 values is
+		// just their average: the very star being checked always pulls
+		// its own "consensus" halfway toward itself, so its deviation
+		// from that consensus is mathematically always exactly HALF its
+		// true error — never enough to exceed patternMaxJump on its own.
+		// A real reported case: a comparison star slowly drifted onto an
+		// empty patch of background over several frames (individually
+		// unremarkable steps that never tripped its own tolerance, until
+		// its flux — now checked above — finally revealed the drift);
+		// with only 1 other tracked star, this consensus check could
+		// never have caught it even if flux hadn't. reliableConsensus
+		// gates the "failed own tolerance but agrees with consensus, so
+		// accept it anyway" shortcut on there being at least 3 tracked
+		// stars, where the median is a genuine majority vote that 1
+		// outlier can't drag along with it.
+		reliableConsensus := len(measurements) >= 3
+
+		for i, m := range measurements {
+			deviation := photometry.Distance(m.disp.DX, m.disp.DY, consensus.DX, consensus.DY)
+			if m.withinOwnTolerance && deviation <= patternMaxJump {
+				continue
+			}
+			if !m.withinOwnTolerance && reliableConsensus && deviation <= patternMaxJump {
+				// Failed its own tolerance, but agrees with the group —
+				// treat as a real, shared field shift rather than a
+				// wrong lock, and accept the direct measurement as-is.
+				continue
+			}
+			// Re-running photometry.Measure here would not help: it just
+			// centroids on whatever signal is nearest the search box,
+			// which is exactly the wrong star that got this star flagged
+			// in the first place — reseeding the search center doesn't
+			// change WHICH star is inside the box, only where the search
+			// starts looking. reacquireStar is different: it runs
+			// DetectStars over a local region and explicitly picks the
+			// candidate closest to the expected position (here, the
+			// consensus-predicted one), so it can reject a nearer-but-
+			// wrong star in favor of a farther-but-correct one — which is
+			// exactly the discrimination needed. Always eligible
+			// (reacquireGapFrames floors at 1) regardless of
+			// t.framesSinceSuccess, since a pattern mismatch is its own
+			// independent justification for a reacquisition attempt; still
+			// scaled up by cadenceGap when a missing file widened the real
+			// elapsed time, same as the other two reacquireStar call sites.
+			seedX := m.lastX + consensus.DX
+			seedY := m.lastY + consensus.DY
+			reacquired, reacqErr := reacquireStar(img, seedX, seedY, reacquireGapFrames(0, cadenceGap), lastFlux[i], cfg)
+			if reacqErr != nil {
+				if m.withinOwnTolerance {
+					// The direct measurement already passed its OWN
+					// tolerance check — it's a plausible position for this
+					// star by itself, just one that happens to disagree
+					// with this frame's group consensus by a bit more than
+					// patternMaxJump allows. reacquireStar failing to find
+					// something even better near the consensus-predicted
+					// spot isn't evidence the direct measurement is wrong,
+					// only that it couldn't be improved on. Falling back
+					// to it (instead of failing the whole frame) avoids
+					// discarding a good measurement over noise-level
+					// pattern disagreement, and — critically — still
+					// advances this star's tracked position, so a later
+					// frame isn't left comparing against an increasingly
+					// stale one. A star that failed its own tolerance
+					// AND the pattern check has no such fallback: nothing
+					// here vouches for its direct measurement, so a failed
+					// reacquire still fails the frame via patternMismatchErr,
+					// letting the caller retry with detectFieldShift.
+					measurements[i] = m
+					continue
+				}
+				return nil, false, patternMismatchError(m.name, deviation, patternMaxJump), nil
+			}
+			reacquiredAny = true
+			measurements[i] = trackedStarMeasurement{
+				name:  m.name,
+				lastX: m.lastX, lastY: m.lastY,
+				res:                reacquired,
+				disp:               photometry.Displacement{DX: reacquired.X - m.lastX, DY: reacquired.Y - m.lastY},
+				withinOwnTolerance: true,
+			}
+		}
+		return measurements, reacquiredAny, nil, nil
+	}
+
+	measurements, reacquiredAny, patternMismatchErr, hardErr := attempt(lastX, lastY)
+	if hardErr != nil {
+		return photometry.Result{}, nil, 0, hardErr
+	}
+	if patternMismatchErr != nil {
+		// The ordinary pass (seeded at last-known positions) couldn't
+		// reconcile every star with the group consensus. Before giving up,
+		// try ONE wide-area detectFieldShift scan — expensive (a
+		// DetectStars pass over the whole image) but only paid on this
+		// failure path, not every frame — to check whether a shared
+		// field shift (e.g. the observer recentering the telescope)
+		// rather than an ordinary wrong-star lock explains the mismatch.
+		// If found, retry the whole attempt seeded from the shifted
+		// positions; a real shared shift should then let every star pass
+		// its own tolerance directly, without needing the pattern-check's
+		// per-star reacquire fallback at all.
+		if shiftDX, shiftDY, ok := detectFieldShift(img, names, lastX, lastY, cfg); ok {
+			seedX := make([]float64, len(lastX))
+			seedY := make([]float64, len(lastY))
+			for i := range lastX {
+				seedX[i] = lastX[i] + shiftDX
+				seedY[i] = lastY[i] + shiftDY
+			}
+			retried, retriedReacquired, retriedMismatchErr, retriedHardErr := attempt(seedX, seedY)
+			if retriedHardErr != nil {
+				return photometry.Result{}, nil, 0, retriedHardErr
+			}
+			if retriedMismatchErr == nil {
+				measurements, reacquiredAny = retried, retriedReacquired
+			} else {
+				return photometry.Result{}, nil, 0, patternMismatchErr
+			}
+		} else {
+			return photometry.Result{}, nil, 0, patternMismatchErr
+		}
+	}
+
+	// All stars resolved: commit tracked positions and build the result.
+	targetRes = measurements[0].res
+	targetDrift = photometry.Distance(measurements[0].lastX, measurements[0].lastY, targetRes.X, targetRes.Y)
+	t.targetX, t.targetY = targetRes.X, targetRes.Y
+	t.targetFlux = targetRes.NetFlux
+
+	compResults = make([]photometry.Result, len(t.compNames))
+	for i, m := range measurements[1:] {
+		compResults[i] = m.res
+		t.compX[i], t.compY[i] = m.res.X, m.res.Y
+		t.compFlux[i] = m.res.NetFlux
+	}
+
+	if reacquiredAny {
+		t.lastReacquireGap = t.framesSinceSuccess
+	}
+	t.framesSinceSuccess = 0
+	return targetRes, compResults, targetDrift, nil
+}
+
+// patternMismatchError reports that a tracked star's frame-to-frame
+// displacement disagreed with the rest of the group's consensus
+// displacement by more than the pattern tolerance allows, even after a
+// consensus-seeded reacquisition attempt — distinct from an ordinary
+// fieldShiftError so the Series inspector can show the real cause: a
+// likely lock onto the wrong (but real, nearby) star, not a genuine
+// field shift affecting the whole frame.
+func patternMismatchError(name string, deviation, maxDeviation float64) error {
+	return fmt.Errorf("%s: displacement disagrees with the rest of the group (%.1fpx from consensus, max %.1fpx) — wrong-star lock suspected", name, deviation, maxDeviation)
 }
 
 // fieldShiftError reports that a tracked star moved farther between two
@@ -974,6 +1591,315 @@ func (t *starTracker) measureComps(img *fits.Image, cfg config.Config) ([]photom
 func fieldShiftError(who string, prevX, prevY, newX, newY float64, level int, maxPixels float64) error {
 	dist := math.Hypot(newX-prevX, newY-prevY)
 	return fmt.Errorf("%s: field shift of %.1fpx exceeds tolerance (level %d, max %.1fpx)", who, dist, level, maxPixels)
+}
+
+const (
+	// reacquireGrowthPxPerFrame is how many extra pixels of local search
+	// radius (beyond the ordinary centroid box) are allowed per skipped
+	// frame, and reacquireToleranceGrowthPxPerFrame is the matching
+	// per-frame growth applied to the acceptance check on the reacquired
+	// position — both capped at reacquireMaxGapFrames worth of growth so
+	// an extremely long unattended gap doesn't grow the search area
+	// without bound. Deliberately modest: the goal is to bridge ordinary
+	// short exclusion gaps, not to paper over long stretches where the
+	// star should really be re-marked by hand.
+	reacquireGrowthPxPerFrame          = 2.0
+	reacquireToleranceGrowthPxPerFrame = 1.5
+	reacquireMaxGapFrames              = 15
+	reacquireMinCounts                 = 1000.0 // absolute floor only, same as detectStarsAction; DetectStars combines it with an adaptive per-region threshold
+
+	// fluxToleranceRatio is how many times brighter OR fainter than
+	// expected a reacquired candidate's NetFlux is allowed to be. Wide on
+	// purpose: NetFlux legitimately varies frame to frame with seeing,
+	// transparency, and airmass (that's the signal Starflux measures), and
+	// this check only needs to catch a categorically different star, not
+	// ordinary photometric scatter. A real reported case had a wrong
+	// candidate at ~1/7th (~0.15x) the expected flux; 3x in either
+	// direction stays comfortably clear of normal variation while still
+	// rejecting that kind of wrong-star mismatch.
+	fluxToleranceRatio = 3.0
+)
+
+// fluxWithinTolerance reports whether candidateFlux is within
+// fluxToleranceRatio of expectedFlux in either direction (brighter or
+// fainter). Both non-positive fluxes are treated as within tolerance
+// (nothing meaningful to compare); a non-positive candidateFlux against a
+// positive expectedFlux is always out of tolerance.
+func fluxWithinTolerance(expectedFlux, candidateFlux float64) bool {
+	if expectedFlux <= 0 {
+		return true
+	}
+	if candidateFlux <= 0 {
+		return false
+	}
+	ratio := candidateFlux / expectedFlux
+	return ratio >= 1/fluxToleranceRatio && ratio <= fluxToleranceRatio
+}
+
+// reacquireGapFrames combines framesSinceSuccess (skipped/errored attempts
+// counted by index within s.series) with cadenceGap (elapsed time between
+// this and the last attempted image, in units of the series' typical
+// frame interval — see jdCadenceGap) into the gapFrames value passed to
+// reacquireStar, taking whichever signal indicates the larger real gap.
+// framesSinceSuccess alone floored at 1 ensures the very first
+// tolerance/measure failure after a success still gets a (minimally)
+// grown search radius instead of none at all (it's 0 at that point since
+// it's only incremented after the failure is recorded, but the failing
+// star is already effectively one frame out of date). cadenceGap alone
+// catches the complementary case framesSinceSuccess can't see at all: a
+// file missing from disk between two present, back-to-back-in-s.series
+// images, which advances no skip counter but still means real time (and
+// real possible displacement) elapsed.
+func reacquireGapFrames(framesSinceSuccess, cadenceGap int) int {
+	gap := framesSinceSuccess
+	if gap < 1 {
+		gap = 1
+	}
+	if cadenceGap > gap {
+		gap = cadenceGap
+	}
+	return gap
+}
+
+// reacquireStar attempts to relocate a star that drifted more than the
+// ordinary per-frame tolerance allows, after gapFrames frames were skipped
+// (excluded or errored) since it was last successfully tracked. It scans a
+// LOCALLY BOUNDED region (photometry.DetectStars over a boundedPixelSource,
+// radius growing with gapFrames up to reacquireMaxGapFrames) centered on
+// the star's last-known-good position (lastX, lastY) — deliberately NOT
+// the star's original manually-marked position, since the last-known-good
+// position is the best available estimate after a short gap.
+//
+// Among DetectStars' candidates, it picks the one CLOSEST to
+// (lastX, lastY) — not the brightest — since the goal is reacquiring one
+// specific known star, not bulk field detection; picking by brightness
+// risks locking onto an unrelated brighter neighbor. The closest candidate
+// must still fall within a gap-scaled tolerance allowance; if no candidate
+// exists in the region, or the closest one still exceeds the gap-scaled
+// allowance, this returns an error and the caller falls back to its
+// existing fieldShiftError path — reacquisition never silently accepts a
+// candidate it can't justify by proximity to where the star was expected.
+// This is what keeps a genuine field-shift/cloud/mount-slew event failing
+// exactly as before: DetectStars won't find a plausible candidate near an
+// uncorrupted last-known position if the star truly isn't there anymore.
+//
+// If expectedFlux is positive, the refined candidate's own NetFlux is also
+// checked against it (within fluxToleranceRatio) before being accepted.
+// Proximity alone isn't sufficient discrimination in a crowded field: a
+// real reported case had reacquireStar geometrically accept a candidate
+// within its gap-scaled position tolerance that was actually a different,
+// ~7x fainter star sitting close to where the tracked (and much brighter)
+// star was expected — proximity to the last-known position doesn't imply
+// it's the same star, since a genuinely large gap (e.g. a file missing
+// from the series) can put a wrong-but-nearby neighbor closer to that
+// stale position than the real star's new one. expectedFlux == 0 (no
+// prior successful measurement yet for this star) skips the check
+// entirely, since there's nothing yet to compare against.
+func reacquireStar(img *fits.Image, lastX, lastY float64, gapFrames int, expectedFlux float64, cfg config.Config) (photometry.Result, error) {
+	growthFrames := gapFrames
+	if growthFrames > reacquireMaxGapFrames {
+		growthFrames = reacquireMaxGapFrames
+	}
+	searchHalfWidth := float64(cfg.CentroidHalfWidth) + float64(growthFrames)*reacquireGrowthPxPerFrame
+	gapMaxJump := toleranceLevelToPixels(cfg.ToleranceLevel) + float64(growthFrames)*reacquireToleranceGrowthPxPerFrame
+
+	region := boundedRegion(img, lastX, lastY, searchHalfWidth)
+	candidates := photometry.DetectStars(region, reacquireMinCounts, 1, photometry.DefaultSigmaMultiplier)
+	if len(candidates) == 0 {
+		return photometry.Result{}, fmt.Errorf("reacquireStar: no candidate found within %.1fpx of (%.1f, %.1f)", searchHalfWidth, lastX, lastY)
+	}
+
+	best := closestDetection(candidates, lastX-float64(region.x0), lastY-float64(region.y0))
+	bestX := best.X + float64(region.x0)
+	bestY := best.Y + float64(region.y0)
+	if photometry.Distance(lastX, lastY, bestX, bestY) > gapMaxJump {
+		return photometry.Result{}, fmt.Errorf("reacquireStar: closest candidate at (%.1f, %.1f) exceeds gap-scaled tolerance %.1fpx", bestX, bestY, gapMaxJump)
+	}
+
+	// The final sub-pixel refinement below must not use a search box wide
+	// enough to pull in a DIFFERENT candidate DetectStars already
+	// resolved as a separate source — otherwise this step silently undoes
+	// the discrimination DetectStars/closestDetection just did, biasing
+	// the centroid back toward a nearby-but-wrong neighbor (this was a
+	// real bug: a crowded pair of stars correctly told apart by
+	// DetectStars, then re-blended by an unrestricted refinement pass).
+	// Cap the refinement half-width at half the distance to the nearest
+	// OTHER candidate, so its search box can never reach that neighbor.
+	refineHalfWidth := float64(cfg.CentroidHalfWidth)
+	if nearest, ok := nearestOtherCandidateDistance(candidates, best); ok {
+		if maxSafe := nearest / 2; maxSafe < refineHalfWidth {
+			refineHalfWidth = maxSafe
+		}
+	}
+	if refineHalfWidth < 1 {
+		refineHalfWidth = 1
+	}
+
+	res, err := photometry.Measure(img, int(bestX), int(bestY), int(refineHalfWidth), cfg.Aperture)
+	if err != nil {
+		return photometry.Result{}, fmt.Errorf("reacquireStar: %w", err)
+	}
+	if expectedFlux > 0 && !fluxWithinTolerance(expectedFlux, res.NetFlux) {
+		return photometry.Result{}, fmt.Errorf("reacquireStar: candidate at (%.1f, %.1f) has flux %.0f, too far from expected %.0f — likely a different, wrong star", res.X, res.Y, res.NetFlux, expectedFlux)
+	}
+	return res, nil
+}
+
+// nearestOtherCandidateDistance returns the distance from best to the
+// closest OTHER detection in candidates, and whether any other candidate
+// exists at all (false if best is the only one).
+func nearestOtherCandidateDistance(candidates []photometry.Detection, best photometry.Detection) (float64, bool) {
+	found := false
+	var nearest float64
+	for _, c := range candidates {
+		if c == best {
+			continue
+		}
+		d := photometry.Distance(best.X, best.Y, c.X, c.Y)
+		if !found || d < nearest {
+			nearest = d
+			found = true
+		}
+	}
+	return nearest, found
+}
+
+// closestDetection returns the candidate nearest (x, y). candidates must
+// be non-empty.
+func closestDetection(candidates []photometry.Detection, x, y float64) photometry.Detection {
+	best := candidates[0]
+	bestDist := photometry.Distance(x, y, best.X, best.Y)
+	for _, c := range candidates[1:] {
+		if d := photometry.Distance(x, y, c.X, c.Y); d < bestDist {
+			best, bestDist = c, d
+		}
+	}
+	return best
+}
+
+// boundedPixelSource restricts a photometry.PixelSource to a rectangular
+// sub-region, presenting local (0,0)-origin coordinates to a wrapped scan
+// (photometry.DetectStars). Callers must translate returned Detection
+// coordinates back to the source's coordinate space by adding x0/y0.
+type boundedPixelSource struct {
+	src            photometry.PixelSource
+	x0, y0, x1, y1 int // inclusive bounds in src's coordinate space
+}
+
+func boundedRegion(src photometry.PixelSource, cx, cy, halfWidth float64) boundedPixelSource {
+	x0 := clampInt(int(cx-halfWidth), 0, src.Width()-1)
+	y0 := clampInt(int(cy-halfWidth), 0, src.Height()-1)
+	x1 := clampInt(int(cx+halfWidth), 0, src.Width()-1)
+	y1 := clampInt(int(cy+halfWidth), 0, src.Height()-1)
+	return boundedPixelSource{src: src, x0: x0, y0: y0, x1: x1, y1: y1}
+}
+
+func (b boundedPixelSource) Width() int  { return b.x1 - b.x0 + 1 }
+func (b boundedPixelSource) Height() int { return b.y1 - b.y0 + 1 }
+func (b boundedPixelSource) At(x, y int) float64 {
+	return b.src.At(b.x0+x, b.y0+y)
+}
+
+func clampInt(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+// showSeriesInspectorDialog lists every image in the loaded series with its
+// most recent processing status, an "Inspect" button to preview it, and a
+// checkbox to include/exclude it from the next Process run. It is rebuilt
+// from scratch every time it's opened (Fyne dialogs aren't kept alive
+// across closes), so it always reflects the current appState — including
+// updated statuses immediately after a Process run, and included/excluded
+// toggles set in a previous opening of this same dialog, since toggling a
+// check here writes straight back into the *fits.Image in s.series.
+func (s *appState) showSeriesInspectorDialog() {
+	if len(s.series) == 0 {
+		dialog.ShowInformation("Starflux", noSeriesLoadedMsg, s.win)
+		return
+	}
+
+	rows := container.NewVBox()
+	okCount, errCount, excludedCount, pendingCount := 0, 0, 0, 0
+
+	for _, img := range s.series {
+		img := img // capture
+
+		st := s.imageStatus[img.Path] // zero value == statusPending if absent
+		switch {
+		case !img.Included:
+			excludedCount++
+		case st.kind == statusOK:
+			okCount++
+		case st.kind == statusError:
+			errCount++
+		default:
+			pendingCount++
+		}
+
+		statusText := st.kind.String()
+		if !img.Included {
+			statusText = statusExcluded.String()
+		}
+		if st.kind == statusError && st.message != "" {
+			statusText = fmt.Sprintf("Error: %s", st.message)
+		}
+		if st.kind == statusOK && st.recoveredAfterGap > 0 {
+			statusText = fmt.Sprintf("%s (re-acquired after %d skipped frame(s))", statusText, st.recoveredAfterGap)
+		}
+
+		nameLabel := widget.NewLabel(filepath.Base(img.Path))
+		statusLabel := widget.NewLabel(statusText)
+
+		inspectButton := widget.NewButton("Inspect", func() {
+			previewStars := st.trackedStars
+			if previewStars == nil {
+				previewStars = s.stars
+			}
+			showImagePreviewDialog(s.win, img, s.levels, previewStars)
+		})
+
+		includeCheck := widget.NewCheck("Include", func(checked bool) {
+			img.Included = checked
+		})
+		includeCheck.SetChecked(img.Included)
+
+		rows.Add(container.NewHBox(nameLabel, statusLabel, inspectButton, includeCheck))
+	}
+
+	scroll := container.NewVScroll(rows)
+	scroll.SetMinSize(fyne.NewSize(560, 420))
+
+	summary := widget.NewLabel(fmt.Sprintf(
+		"%d image(s): %d OK, %d error(s), %d excluded, %d not yet processed.",
+		len(s.series), okCount, errCount, excludedCount, pendingCount,
+	))
+
+	dialog.NewCustom("Series inspector", "Close", container.NewVBox(summary, scroll), s.win).Show()
+}
+
+// showImagePreviewDialog renders a single image (using the app's current
+// display levels, matching what the main view would show), with the
+// current Target/Comparison/Check markers overlaid at their marked
+// positions, in a small read-only dialog — so a user can visually confirm
+// whether an image is flagged as an error because of a genuine field
+// shift (markers land off the real stars) or something else (markers
+// still sit correctly on the real stars), without disturbing the main
+// window's own view/star state.
+func showImagePreviewDialog(parent fyne.Window, img *fits.Image, levels ui.Levels, stars []ui.Star) {
+	preview := ui.NewImageView()
+	preview.SetImage(ui.Render(img, levels))
+	preview.SetStars(stars)
+	preview.Resize(fyne.NewSize(480, 480))
+
+	d := dialog.NewCustom(filepath.Base(img.Path), "Close", preview, parent)
+	d.Resize(fyne.NewSize(520, 560)) // leave room for the dialog chrome around the 480x480 view
+	d.Show()
 }
 
 // showLightCurve renders a differential-magnitude light curve and displays

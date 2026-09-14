@@ -93,9 +93,25 @@ func MaxADU(img PixelSource, x0, y0 int, halfWidth int) float64 {
 // Measure performs full aperture photometry for a star centered at
 // (x0, y0), using ap to size the aperture and sky annulus.
 func Measure(img PixelSource, x0, y0 int, halfWidth int, ap Aperture) (Result, error) {
-	// A first pass with bg=0 gives a rough center to seed the sky estimate;
-	// callers wanting a tighter centroid can call Centroid themselves first.
-	cx, cy, err := Centroid(img, x0, y0, halfWidth, 0)
+	// Estimate the local sky background around the seed position BEFORE the
+	// first centroid pass, and subtract it there too (not just bg=0). On a
+	// real image, the sky background is never zero (typically thousands of
+	// ADU) and fills the entire centroid box; weighting every pixel by its
+	// raw ADU value against a bg=0 floor lets that flat background
+	// dominate the weighted center of mass, so the "centroid" converges
+	// toward the geometric center of the search box instead of the actual
+	// star underneath it — this is what let a tracked star's position
+	// silently drift toward box-center frame after frame while still
+	// passing each frame's own jump-tolerance check, since each step's
+	// centroid stayed "close" to the box it was seeded from rather than to
+	// a real star. Subtracting the local background first ensures only
+	// pixels genuinely brighter than the sky contribute weight.
+	bg0, err := skyBackground(img, float64(x0), float64(y0), ap.RIn, ap.ROut)
+	if err != nil {
+		return Result{}, err
+	}
+
+	cx, cy, err := Centroid(img, x0, y0, halfWidth, bg0)
 	if err != nil {
 		return Result{}, err
 	}
@@ -128,6 +144,33 @@ func Distance(prevX, prevY, newX, newY float64) float64 {
 // known position (prevX, prevY).
 func WithinTolerance(prevX, prevY, newX, newY, maxPixels float64) bool {
 	return Distance(prevX, prevY, newX, newY) <= maxPixels
+}
+
+// Displacement is a 2D frame-to-frame movement vector for one tracked
+// star, from its previous position to its newly measured position.
+type Displacement struct {
+	DX, DY float64
+}
+
+// MedianDisplacement returns the per-axis median of a set of displacement
+// vectors: the median of all DX values and, independently, the median of
+// all DY values. Real field drift (imperfect mount tracking) shifts an
+// entire frame by approximately one common vector, so the per-axis median
+// across several independently-tracked stars is a robust estimate of that
+// common vector — a star whose own displacement disagrees sharply with it
+// has very likely locked onto the wrong source, not just drifted
+// normally. Per-axis median (not vector magnitude) mirrors the same
+// robustness reason median is already used elsewhere in this file
+// (skyBackground, EstimateBackground): a single outlier star can't drag
+// the consensus toward itself.
+func MedianDisplacement(displacements []Displacement) Displacement {
+	dxs := make([]float64, len(displacements))
+	dys := make([]float64, len(displacements))
+	for i, d := range displacements {
+		dxs[i] = d.DX
+		dys[i] = d.DY
+	}
+	return Displacement{DX: median(dxs), DY: median(dys)}
 }
 
 // CombineComparisons merges multiple comparison-star measurements into a
@@ -264,10 +307,76 @@ type Detection struct {
 	Peak float64
 }
 
+// BackgroundStats summarizes an image's sky background level and noise
+// spread, robust to the bright star pixels sitting on top of it.
+type BackgroundStats struct {
+	Median float64 // robust background level (ADU)
+	Sigma  float64 // robust noise spread (ADU), derived from MAD
+}
+
+// EstimateBackground computes a robust estimate of an image's sky
+// background level and noise spread, sampling every pixel in img.
+//
+// Median is used instead of the mean because bright star pixels skew a
+// mean upward; this mirrors skyBackground's median-of-annulus approach
+// above, applied to a whole frame instead of one local annulus.
+//
+// Sigma is derived from the Median Absolute Deviation (MAD), scaled by
+// 1.4826 to approximate a Gaussian standard deviation — the standard
+// robust-statistics choice real source finders use, since a plain
+// population stddev is itself inflated by the same bright star pixels the
+// estimate needs to stay robust against.
+func EstimateBackground(img PixelSource) BackgroundStats {
+	w, h := img.Width(), img.Height()
+	values := make([]float64, 0, w*h)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			values = append(values, img.At(x, y))
+		}
+	}
+	if len(values) == 0 {
+		return BackgroundStats{}
+	}
+	med := median(values)
+	deviations := make([]float64, len(values))
+	for i, v := range values {
+		deviations[i] = math.Abs(v - med)
+	}
+	const madToSigma = 1.4826
+	sigma := madToSigma * median(deviations)
+	return BackgroundStats{Median: med, Sigma: sigma}
+}
+
+// DefaultSigmaMultiplier is the recommended number of background-noise
+// sigmas a pixel must exceed above the image's median background to
+// qualify as a candidate in DetectStars. No FotoDif precedent exists to
+// inherit (its manual gives no concrete guidance beyond an undocumented
+// "RSR" ratio) — this is a project-original judgment call, chosen as a
+// middle point within the ~1.5-5 sigma range real source-finders commonly
+// use.
+const DefaultSigmaMultiplier = 4.0
+
 // DetectStars performs a simple bulk star-finder over the full image: it
-// scans for local-maxima pixels exceeding minCounts, then greedily keeps
-// the brightest detections first, suppressing any other candidate within
-// minSeparation pixels of an already-kept one (non-maximum suppression).
+// scans for local-maxima pixels exceeding an effective threshold, then
+// greedily keeps the brightest detections first, suppressing any other
+// candidate within minSeparation pixels of an already-kept one
+// (non-maximum suppression).
+//
+// The effective threshold is the larger of two values: minCounts (an
+// explicit caller-supplied absolute ADU floor; pass 0 to disable it and
+// rely purely on the adaptive threshold), and an adaptive threshold
+// computed from the image's own background statistics (EstimateBackground):
+// background.Median + sigmaMultiplier*background.Sigma. This makes
+// detection scale to what each image's sky background actually looks
+// like, instead of a fixed number tuned for a different instrument or
+// exposure — a fixed minCounts sitting below a brighter image's own sky
+// background would otherwise flood detection with one bogus candidate per
+// minSeparation-sized tile across the whole frame instead of a handful of
+// real stars. A candidate must also sit strictly above the background
+// median itself, so a perfectly flat, noise-free image (Sigma == 0 — never
+// true of a real exposure, but reachable with synthetic input) can't tie
+// the threshold and flood detection with one candidate per background
+// pixel.
 //
 // This deliberately does not attempt to replicate FotoDif's undocumented
 // "RSR" (an unexplained signal-ratio threshold) — no specification of it
@@ -280,14 +389,25 @@ type Detection struct {
 // Detected positions are pixel-precision (the local-max pixel), not
 // centroid-refined — callers should re-run Centroid/Measure after
 // accepting a detection if sub-pixel precision matters.
-func DetectStars(img PixelSource, minCounts, minSeparation float64) []Detection {
+func DetectStars(img PixelSource, minCounts, minSeparation, sigmaMultiplier float64) []Detection {
 	w, h := img.Width(), img.Height()
+
+	bg := EstimateBackground(img)
+	effectiveThreshold := math.Max(minCounts, bg.Median+sigmaMultiplier*bg.Sigma)
 
 	var candidates []Detection
 	for y := 1; y < h-1; y++ {
 		for x := 1; x < w-1; x++ {
 			v := img.At(x, y)
-			if v < minCounts {
+			// A candidate must clear the effective threshold AND sit strictly
+			// above the background level itself: when an image's background
+			// is perfectly flat (Sigma == 0, no measurable noise — never true
+			// of a real exposure, but possible in synthetic/degenerate
+			// inputs), effectiveThreshold collapses to exactly bg.Median, and
+			// without this second check every background pixel would tie the
+			// threshold and flood detection with one bogus candidate per
+			// minSeparation tile, same as the original reported bug.
+			if v < effectiveThreshold || v <= bg.Median {
 				continue
 			}
 			if !isLocalMax3x3(img, x, y, v) {
